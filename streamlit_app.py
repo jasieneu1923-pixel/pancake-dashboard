@@ -33,23 +33,32 @@ if data:
     all_items = []
 
     for order in data:
-        # 1. THÔNG TIN CHUNG & TÀI CHÍNH (Đã thêm Tên trạng thái & Ngày cập nhật)
+        # 1. THÔNG TIN CHUNG, TÀI CHÍNH & NHÂN VIÊN
         order_info = {
+            "ID hệ thống": order.get('id'),
             "Mã hiển thị": order.get('display_id'),
+            "Mã tùy chỉnh (Custom ID)": order.get('custom_id'),
             "Tên Page": order.get('page', {}).get('name'),
             "Page ID": order.get('page_id'),
+            "Tên trạng thái": order.get('status_name'),
             "Trạng thái (Số)": order.get('status'),
-            "Tên trạng thái": order.get('status_name'), # Trường status_name từ JSON
             "Ngày tạo": order.get('inserted_at'),
-            "Ngày cập nhật": order.get('updated_at'), # Trường updated_at từ JSON
+            "Ngày cập nhật": order.get('updated_at'),
             "Tên khách": order.get('bill_full_name'),
             "SĐT khách": order.get('bill_phone_number'),
-            "Nguồn Ads": order.get('ads_source'),
             "Nhân viên tạo": order.get('creator', {}).get('name'),
-            "Tổng tiền": order.get('total_price'),
+            "Nhân viên cập nhật cuối": order.get('updator', {}).get('name'), # Lấy từ trường updator
+            
+            # --- TOÀN BỘ CÁC TRƯỜNG LIÊN QUAN ĐẾN TIỀN ---
+            "Tổng tiền (Total Price)": order.get('total_price'),
             "Tiền thu hộ (COD)": order.get('cod'),
-            "Giảm giá tổng": order.get('total_discount'),
-            "Phí ship": order.get('shipping_fee'),
+            "Giảm giá đơn (Discount)": order.get('discount'),
+            "Tổng giảm giá (Total Discount)": order.get('total_discount'),
+            "Phí ship báo khách (Shipping Fee)": order.get('shipping_fee'),
+            "Khách trả phí (Customer Pay Fee)": order.get('customer_pay_fee'),
+            "Tiền chuyển khoản": order.get('transfer_money'),
+            "Tiền mặt": order.get('cash'),
+            "Nguồn Ads": order.get('ads_source')
         }
         all_orders.append(order_info)
 
@@ -78,7 +87,7 @@ if data:
     tab1, tab2 = st.tabs(["📑 Đơn hàng & Tài chính", "📦 Chi tiết Sản phẩm & Mã định danh"])
 
     with tab1:
-        st.subheader("Bảng tổng hợp Đơn hàng & Trạng thái mới nhất")
+        st.subheader("Bảng tổng hợp Đơn hàng, Tiền và Nhân viên")
         st.dataframe(df_orders, use_container_width=True)
 
     with tab2:
