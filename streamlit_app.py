@@ -38,7 +38,7 @@ inventory_raw = fetch_pancake_data("variations", {"limit": 100, "is_get_inventor
 
 # --- 4. XỬ LÝ DỮ LIỆU ---
 
-# Bảng Đơn hàng & Sản phẩm
+# Bảng Đơn hàng & Sản phẩm đơn
 df_orders = pd.DataFrame()
 df_order_items = pd.DataFrame()
 
@@ -52,13 +52,13 @@ if all_orders_raw:
             "Ngày tạo": order.get('inserted_at'),
             "Tên khách": order.get('bill_full_name'),
             "SĐT khách": order.get('bill_phone_number'),
-            "Tổng tiền (Total Price)": order.get('total_price'),
-            "Tiền thu hộ (COD)": order.get('cod'),
-            "Giảm giá đơn (Discount)": order.get('discount'),
-            "Phí ship báo khách": order.get('shipping_fee'),
-            "Tiền chuyển khoản": order.get('transfer_money'),
+            "Tổng tiền": order.get('total_price'),
+            "COD": order.get('cod'),
+            "Giảm giá": order.get('discount'),
+            "Phí ship": order.get('shipping_fee'),
+            "Chuyển khoản": order.get('transfer_money'),
             "Tiền mặt": order.get('cash'),
-            "Nhân viên tạo": order.get('creator', {}).get('name')
+            "Nhân viên": order.get('creator', {}).get('name')
         })
         for item in order.get('items', []):
             v_info = item.get('variation_info', {})
@@ -68,8 +68,8 @@ if all_orders_raw:
                 "Chi tiết": v_info.get('detail'),
                 "Mã SKU": v_info.get('id'),
                 "Số lượng": item.get('quantity'),
-                "Giá bán niêm yết": v_info.get('retail_price'),
-                "Giá nhập cuối": v_info.get('last_imported_price')
+                "Giá niêm yết": v_info.get('retail_price'),
+                "Giá nhập": v_info.get('last_imported_price')
             })
     df_orders = pd.DataFrame(orders_data)
     df_order_items = pd.DataFrame(items_in_orders)
@@ -77,39 +77,43 @@ if all_orders_raw:
 # Bảng Nhập hàng
 df_purchase = pd.DataFrame([{
     "Mã phiếu nhập": p.get('display_id'),
-    "Nhà cung cấp": p.get('supplier', {}).get('name'),
+    "Nhà cung cấp": p.get('supplier', {}).get('name') if p.get('supplier') else "N/A",
     "Trạng thái": p.get('status_name'),
     "Tổng tiền": p.get('total_price'),
     "Đã trả NCC": p.get('total_paid'),
     "Ngày tạo": p.get('inserted_at')
 } for p in purchase_raw])
 
-# Bảng Tồn kho (ĐÃ SỬA LỖI INDEXERROR)
+# Bảng Tồn kho (ĐÃ SỬA LỖI TYPEERROR & INDEXERROR)
 inventory_processed = []
 for v in inventory_raw:
-    fields = v.get('fields', [])
-    attr_map = {f.get('name').lower(): f.get('value') for f in fields}
+    # 1. Xử lý thuộc tính (Màu, Size)
+    fields = v.get('fields') or []
+    attr_map = {str(f.get('name', '')).lower(): f.get('value') for f in fields if isinstance(f, dict)}
     
-    # KIỂM TRA AN TOÀN TRƯỚC KHI TRUY CẬP [0]
-    warehouses = v.get('variations_warehouses', [])
+    # 2. Xử lý thông tin kho an toàn
+    warehouses = v.get('variations_warehouses') or []
     wh = warehouses[0] if isinstance(warehouses, list) and len(warehouses) > 0 else {}
     
-    ptable = v.get('price_table', [])
-    v_wholesale = next((p.get('price') for p in ptable if "sỉ" in p.get('name', '').lower()), 0)
+    # 3. Xử lý bảng giá an toàn (SỬA LỖI TYPEERROR TẠI ĐÂY)
+    ptable = v.get('price_table') or []
+    v_wholesale = 0
+    if isinstance(ptable, list):
+        v_wholesale = next((p.get('price') for p in ptable if isinstance(p, dict) and "sỉ" in str(p.get('name', '')).lower()), 0)
 
     inventory_processed.append({
         "Mã SKU": v.get('display_id'),
-        "Tên sản phẩm": v.get('product', {}).get('name'),
+        "Tên sản phẩm": v.get('product', {}).get('name') if v.get('product') else "N/A",
         "Màu": attr_map.get('màu', ''),
         "Size": attr_map.get('size', ''),
-        "Tồn khả dụng": v.get('remain_quantity'),
+        "Tồn khả dụng": v.get('remain_quantity', 0),
         "Tồn thực tế kho": wh.get('actual_remain_quantity', 0),
         "Tổng tồn": wh.get('total_quantity', 0),
         "Hàng đang về": wh.get('pending_quantity', 0),
-        "Giá nhập cuối": v.get('last_imported_price'),
-        "Giá bán lẻ": v.get('retail_price'),
+        "Giá nhập cuối": v.get('last_imported_price', 0),
+        "Giá bán lẻ": v.get('retail_price', 0),
         "Giá bán sỉ": v_wholesale,
-        "Barcode": v.get('barcode')
+        "Barcode": v.get('barcode', '')
     })
 df_inventory = pd.DataFrame(inventory_processed)
 
