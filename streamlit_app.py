@@ -4,13 +4,13 @@ import pandas as pd
 from datetime import datetime
 
 # --- CẤU HÌNH GIAO DIỆN ---
-st.set_page_config(page_title="Pancake Full Data Extraction", layout="wide")
+st.set_page_config(page_title="Pancake ERP Full Data", layout="wide")
 
 # Sidebar bảo mật
-st.sidebar.header("⚙️ QUẢN LÝ DỮ LIỆU")
+st.sidebar.header("⚙️ CẤU HÌNH")
 password = st.sidebar.text_input("Mật khẩu", type="password")
 if password != "123":
-    st.warning("Vui lòng nhập mật khẩu (123) để xem dữ liệu.")
+    st.warning("Vui lòng nhập mật khẩu để xem dữ liệu.")
     st.stop()
 
 # --- THÔNG TIN API ---
@@ -18,81 +18,91 @@ TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiUGjGsMahbmcgS-G6vyB0b8
 SHOP_ID = "30224071"
 
 @st.cache_data(ttl=60)
-def fetch_data():
-    url = f"https://pos.pages.fm/api/v1/shops/{SHOP_ID}/orders"
-    params = {"access_token": TOKEN, "limit": 100, "mode": "all"}
+def fetch_pancake_data(endpoint, extra_params=None):
+    url = f"https://pos.pages.fm/api/v1/shops/{SHOP_ID}/{endpoint}"
+    params = {"access_token": TOKEN}
+    if extra_params: params.update(extra_params)
     try:
         resp = requests.get(url, params=params)
         return resp.json().get("data", []) if resp.status_code == 200 else []
     except: return []
 
-data = fetch_data()
+# --- 1. LẤY DỮ LIỆU NHẬP HÀNG (PURCHASE ORDERS) ---
+# API: /shops/:shop_id/purchase_orders
+purchase_raw = fetch_pancake_data("purchase_orders", {"limit": 100})
 
-if data:
-    all_orders = []
-    all_items = []
+# --- 2. LẤY DỮ LIỆU TỒN KHO CHI TIẾT (VARIATIONS) ---
+# API: /shops/:shop_id/variations
+inventory_raw = fetch_pancake_data("variations", {"limit": 100, "is_get_inventory": "true"})
 
-    for order in data:
-        # Lấy Custom ID chung để dùng cho cả 2 bảng
-        custom_id = order.get('custom_id')
+# --- XỬ LÝ BẢNG NHẬP HÀNG ---
+purchase_list = []
+for p in purchase_raw:
+    purchase_list.append({
+        "ID Phiếu": p.get('id'),
+        "Mã hiển thị": p.get('display_id'),
+        "Ngày tạo": p.get('inserted_at'),
+        "Ngày nhập": p.get('received_at'),
+        "Trạng thái": p.get('status_name'),
+        "Nhà cung cấp": p.get('supplier', {}).get('name'),
+        "SĐT NCC": p.get('supplier', {}).get('phone_number'),
+        "Kho nhận": p.get('warehouse', {}).get('name'),
+        "Tổng số lượng": p.get('total_quantity'),
+        "Tổng tiền hàng": p.get('total_price'),
+        "Đã trả": p.get('total_paid'),
+        "Còn nợ": p.get('total_price', 0) - p.get('total_paid', 0),
+        "Chiết khấu phiếu": p.get('discount_value'),
+        "Phí nhập hàng": p.get('shipping_fee'),
+        "Người tạo": p.get('creator', {}).get('name'),
+        "Ghi chú": p.get('note')
+    })
 
-        # 1. THÔNG TIN CHUNG, TÀI CHÍNH & NHÂN VIÊN
-        order_info = {
-            "Mã tùy chỉnh (Custom ID)": custom_id,
-            "Tên Page": order.get('page', {}).get('name'),
-            "Page ID": order.get('page_id'),
-            "Trạng thái (Số)": order.get('status'),
-            "Ngày tạo": order.get('inserted_at'),
-            "Ngày cập nhật": order.get('updated_at'),
-            "Tên khách": order.get('bill_full_name'),
-            "SĐT khách": order.get('bill_phone_number'),
-            "Nhân viên tạo": order.get('creator', {}).get('name'),
-            "Nhân viên cập nhật cuối": order.get('updator', {}).get('name'),
-            
-            # --- CÁC TRƯỜNG LIÊN QUAN ĐẾN TIỀN ---
-            "Tổng tiền (Total Price)": order.get('total_price'),
-            "Tiền thu hộ (COD)": order.get('cod'),
-            "Giảm giá đơn (Discount)": order.get('discount'),
-            "Tổng giảm giá (Total Discount)": order.get('total_discount'),
-            "Phí ship báo khách (Shipping Fee)": order.get('shipping_fee'),
-            "Khách trả phí (Customer Pay Fee)": order.get('customer_pay_fee'),
-            "Tiền chuyển khoản": order.get('transfer_money'),
-            "Tiền mặt": order.get('cash'),
-            "Nguồn Ads": order.get('ads_source')
-        }
-        all_orders.append(order_info)
+# --- XỬ LÝ BẢNG TỒN KHO CHI TIẾT ---
+inventory_list = []
+for v in inventory_raw:
+    # Lấy thông tin tồn kho theo từng kho nếu có
+    inv = v.get('inventory', {})
+    inventory_list.append({
+        "Mã SKU": v.get('id'),
+        "Tên sản phẩm": v.get('name'),
+        "Chi tiết phân loại": v.get('detail'),
+        "Mã SP gốc (Product ID)": v.get('product_id'),
+        "Barcode": v.get('barcode'),
+        # Các trường tồn kho chi tiết
+        "Tồn thực tế (Quantity)": inv.get('quantity', 0),
+        "Sẵn sàng bán (Available)": inv.get('available_quantity', 0),
+        "Hàng đang về (Incoming)": inv.get('incoming_quantity', 0),
+        "Đang chuyển kho": inv.get('shipping_quantity', 0),
+        "Khách đang giữ (Holding)": inv.get('holding_quantity', 0),
+        "Đã hỏng/mất": inv.get('damaged_quantity', 0),
+        # Thông tin giá
+        "Giá nhập gần nhất": v.get('last_imported_price'),
+        "Giá bán lẻ": v_info.get('retail_price') if 'v_info' in locals() else v.get('retail_price'),
+        "Giá bán sỉ": v.get('wholesale_price'),
+        "Khối lượng (gram)": v.get('weight'),
+        "Vị trí kệ": v.get('warehouse_info', {}).get('shelf_position')
+    })
 
-        # 2. CHI TIẾT SẢN PHẨM
-        items = order.get('items', [])
-        if isinstance(items, list):
-            for item in items:
-                v_info = item.get('variation_info', {})
-                all_items.append({
-                    "Mã đơn (Custom ID)": custom_id, # Thay đổi từ display_id sang custom_id
-                    "Tên sản phẩm": v_info.get('name'),
-                    "Chi tiết": v_info.get('detail'),
-                    "Mã SKU (Var ID)": v_info.get('id'),
-                    "Mã SP Gốc (Prod ID)": v_info.get('product_id'),
-                    "Số lượng": item.get('quantity'),
-                    "Giá bán niêm yết": v_info.get('retail_price'),
-                    "Giá nhập cuối": v_info.get('last_imported_price'),
-                    "Tên Kho": order.get('warehouse_info', {}).get('name')
-                })
+df_purchase = pd.DataFrame(purchase_list)
+df_inventory = pd.DataFrame(inventory_list)
 
-    df_orders = pd.DataFrame(all_orders)
-    df_items = pd.DataFrame(all_items)
+# --- HIỂN THỊ ---
+st.title("📑 Quản lý Nhập hàng & Tồn kho chi tiết")
 
-    # --- HIỂN THỊ ---
-    st.title("📊 Hệ thống Trích xuất Dữ liệu Pancake POS")
-    tab1, tab2 = st.tabs(["📑 Đơn hàng & Tài chính", "📦 Chi tiết Sản phẩm & Mã định danh"])
+tab1, tab2 = st.tabs(["📥 Lịch sử Nhập hàng", "🏠 Tồn kho chi tiết"])
 
-    with tab1:
-        st.subheader("Bảng tổng hợp Đơn hàng, Tiền và Nhân viên")
-        st.dataframe(df_orders, use_container_width=True)
+with tab1:
+    st.subheader("Danh sách Phiếu nhập kho")
+    if not df_purchase.empty:
+        st.dataframe(df_purchase, use_container_width=True)
+        # Thêm nút tải Excel nếu cần
+    else:
+        st.info("Chưa có dữ liệu phiếu nhập.")
 
-    with tab2:
-        st.subheader("Bảng chi tiết Sản phẩm (SKU & Giá)")
-        st.dataframe(df_items, use_container_width=True)
-
-else:
-    st.info("Đang chờ dữ liệu từ Pancake...")
+with tab2:
+    st.subheader("Dữ liệu tồn kho chi tiết từng SKU")
+    if not df_inventory.empty:
+        # Highlight nếu tồn kho thấp (ví dụ < 5)
+        st.dataframe(df_inventory, use_container_width=True)
+    else:
+        st.info("Chưa có dữ liệu tồn kho.")
