@@ -1,99 +1,99 @@
 import streamlit as st
 import requests
 import pandas as pd
-import plotly.express as px
 from datetime import datetime
 
 # --- CẤU HÌNH GIAO DIỆN ---
-st.set_page_config(page_title="Pancake Advanced Dashboard", layout="wide")
+st.set_page_config(page_title="Pancake Full Data Extraction", layout="wide")
 
-# Sidebar cấu hình
-st.sidebar.header("⚙️ BỘ LỌC NÂNG CAO")
-password = st.sidebar.text_input("Mật khẩu truy cập", type="password")
-
-if password != "123": 
-    st.warning("Vui lòng nhập mật khẩu để xem dữ liệu.")
+# Sidebar bảo mật
+st.sidebar.header("⚙️ QUẢN LÝ DỮ LIỆU")
+password = st.sidebar.text_input("Mật khẩu", type="password")
+if password != "123":
+    st.warning("Vui lòng nhập mật khẩu (123) để xem dữ liệu.")
     st.stop()
 
 # --- THÔNG TIN API ---
 TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiUGjGsMahbmcgS-G6vyB0b8OhbiBIVCIsImV4cCI6MTc4NDYyMzUwNCwiYXBwbGljYXRpb24iOjEsInVpZCI6ImE5OTExMjE4LWUzNGYtNDg1Mi1hYWE1LThlNDk4MTUzZjNkMyIsInNlc3Npb25faWQiOiJlYTBhODUyMy0zMmY2LTQ4MTktOGM3OC1iYjRlY2MzMTMyZTgiLCJpYXQiOjE3NzY4NDc1MDQsImZiX2lkIjoiMTIwMzAwMTc0NDgwODYzIiwibG9naW5fc2Vzc2lvbiI6bnVsbCwiZmJfbmFtZSI6IlBoxrDGoW5nIEvhur8gdG_DoW4gSFQifQ.LSw3FdrrNAzBrEYD5IwKPNY6jjvdH3_m9UEtcalFwR4"
 SHOP_ID = "30224071"
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def fetch_data():
     url = f"https://pos.pages.fm/api/v1/shops/{SHOP_ID}/orders"
     params = {"access_token": TOKEN, "limit": 100, "mode": "all"}
-    resp = requests.get(url, params=params)
-    return resp.json().get("data", []) if resp.status_code == 200 else []
+    try:
+        resp = requests.get(url, params=params)
+        return resp.json().get("data", []) if resp.status_code == 200 else []
+    except: return []
 
 data = fetch_data()
 
 if data:
-    df = pd.DataFrame(data)
-    
-    # --- XỬ LÝ DỮ LIỆU SẢN PHẨM & DANH MỤC ---
-    # Bóc tách tên sản phẩm, mã sản phẩm (SKU) và danh mục từ cột 'products'
-    def extract_product_info(order_products):
-        if not order_products: return [], [], []
-        skus = [p.get('sku', '') for p in order_products if p.get('sku')]
-        names = [p.get('name', '') for p in order_products if p.get('name')]
-        # Giả định danh mục nằm trong thông tin sản phẩm hoặc variation
-        categories = [p.get('category_name', 'Chưa phân loại') for p in order_products]
-        return skus, names, list(set(categories))
+    # --- 1. XỬ LÝ THÔNG TIN CHUNG (ORDERS) ---
+    all_orders = []
+    # --- 2. XỬ LÝ CHI TIẾT SẢN PHẨM (ITEMS) ---
+    all_items = []
 
-    df['product_skus'], df['product_names'], df['categories'] = zip(*df['products'].apply(extract_product_info))
-    
-    # Chuẩn hóa thời gian và thông tin khách
-    df['inserted_at'] = pd.to_datetime(df['inserted_at'])
-    df['customer_name'] = df['customer'].apply(lambda x: x.get('name') if x else 'N/A')
-    df['total_price'] = df['total_price'].astype(float)
+    for order in data:
+        # Nhóm 1 & 2 & 4: Thông tin chung, Tiền đơn hàng, Khách hàng, Nhân viên
+        order_info = {
+            "Mã đơn (ID)": order.get('id'),
+            "Mã hiển thị": order.get('display_id'),
+            "Mã tùy chỉnh": order.get('custom_id'),
+            "Trạng thái": order.get('status'),
+            "Ngày tạo": order.get('inserted_at'),
+            "Tên khách": order.get('bill_full_name'),
+            "SĐT khách": order.get('bill_phone_number'),
+            "Nguồn": order.get('ads_source'),
+            "Nhân viên tạo": order.get('creator', {}).get('name'),
+            # --- CÁC TRƯỜNG LIÊN QUAN ĐẾN TIỀN (CHUNG) ---
+            "Tổng tiền (total_price)": order.get('total_price'),
+            "Tiền thu hộ (cod)": order.get('cod'),
+            "Giảm giá (discount)": order.get('discount'),
+            "Giảm giá tổng (total_discount)": order.get('total_discount'),
+            "Phí ship (shipping_fee)": order.get('shipping_fee'),
+            "Khách trả phí (customer_pay_fee)": order.get('customer_pay_fee'),
+            "Tiền chuyển khoản (transfer_money)": order.get('transfer_money'),
+            "Tiền mặt (cash)": order.get('cash')
+        }
+        all_orders.append(order_info)
 
-    # --- GIAO DIỆN BỘ LỌC (SIDEBAR) ---
-    st.sidebar.subheader("📦 Lọc theo Sản phẩm")
-    
-    # 1. Lọc theo Mã sản phẩm (SKU) - Cho phép dán mã vào
-    sku_input = st.sidebar.text_input("Dán Mã sản phẩm (SKU) vào đây:")
-    
-    # 2. Lọc theo Danh mục (Lấy danh sách từ POS)
-    all_categories = sorted(list(set([cat for sublist in df['categories'] for cat in sublist])))
-    selected_cats = st.sidebar.multiselect("Lọc theo Danh mục:", options=all_categories, default=all_categories)
+        # Nhóm 3: Chi tiết từng sản phẩm
+        items = order.get('items', [])
+        if isinstance(items, list):
+            for item in items:
+                v_info = item.get('variation_info', {})
+                all_items.append({
+                    "Mã đơn": order.get('display_id'),
+                    "Tên sản phẩm": v_info.get('name'),
+                    "Chi tiết": v_info.get('detail'),
+                    "Mã SKU": v_info.get('id'),
+                    "Số lượng": item.get('quantity'),
+                    # --- CÁC TRƯỜNG LIÊN QUAN ĐẾN GIÁ (ITEMS) ---
+                    "Giá bán niêm yết (retail_price)": v_info.get('retail_price'),
+                    "Giá nhập cuối (last_imported_price)": v_info.get('last_imported_price'),
+                    "Giá bán sỉ (wholesale_price)": v_info.get('wholesale_price'),
+                    "Vị trí kệ": item.get('variations_warehouses', [{}])[0].get('shelf_position'),
+                    "Kho": order.get('warehouse_info', {}).get('name')
+                })
 
-    # 3. Lọc theo Ngày
-    start_date = st.sidebar.date_input("Từ ngày:", df['inserted_at'].min().date())
-    end_date = st.sidebar.date_input("Đến ngày:", datetime.now().date())
+    # Tạo DataFrame
+    df_orders = pd.DataFrame(all_orders)
+    df_items = pd.DataFrame(all_items)
 
-    # --- LOGIC LỌC THÔNG MINH ---
-    def filter_logic(row):
-        # Kiểm tra ngày
-        date_match = start_date <= row['inserted_at'].date() <= end_date
-        # Kiểm tra danh mục
-        cat_match = any(cat in selected_cats for cat in row['categories'])
-        # Kiểm tra SKU (Nếu có nhập thì mới lọc)
-        sku_match = True
-        if sku_input:
-            sku_match = any(sku_input.lower() in str(s).lower() for s in row['product_skus'])
-        
-        return date_match and cat_match and sku_match
+    # --- HIỂN THỊ ---
+    st.title("📊 Toàn bộ dữ liệu Pancake POS")
 
-    df_filtered = df[df.apply(filter_logic, axis=1)]
+    # Tab để phân tách thông tin cho dễ nhìn
+    tab1, tab2 = st.tabs(["📑 Thông tin Đơn hàng (Tiền & Chung)", "📦 Chi tiết Sản phẩm (Giá nhập/bán)"])
 
-    # --- HIỂN THỊ KẾT QUẢ ---
-    st.title("📊 Dashboard Lọc Đơn Hàng Theo Sản Phẩm")
-    
-    c1, c2 = st.columns(2)
-    c1.metric("Số đơn hàng khớp bộ lọc", len(df_filtered))
-    c2.metric("Tổng giá trị đơn hàng", f"{df_filtered['total_price'].sum():,.0f} đ")
+    with tab1:
+        st.subheader("Toàn bộ các trường thông tin đơn hàng và tài chính")
+        st.dataframe(df_orders, use_container_width=True)
 
-    st.subheader("📋 Danh sách đơn hàng chi tiết")
-    # Hiển thị bảng kèm cột Mã sản phẩm để đối chiếu
-    show_df = df_filtered.copy()
-    show_df['Mã SP trong đơn'] = show_df['product_skus'].apply(lambda x: ", ".join(x))
-    
-    st.dataframe(show_df[[
-        'id', 'customer_name', 'Mã SP trong đơn', 'total_price', 'inserted_at'
-    ]].rename(columns={
-        'customer_name': 'Tên khách', 'total_price': 'Số tiền', 'inserted_at': 'Ngày tạo'
-    }), use_container_width=True)
+    with tab2:
+        st.subheader("Chi tiết từng sản phẩm, giá vốn và giá bán")
+        st.dataframe(df_items, use_container_width=True)
 
 else:
-    st.error("Không tìm thấy dữ liệu từ Token của bạn.")
+    st.info("Đang chờ dữ liệu từ Pancake...")
