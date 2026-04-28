@@ -28,9 +28,9 @@ def fetch_pancake_data(endpoint, params=None):
     except:
         return {}
 
-# --- 3. TẢI DỮ LIỆU ĐA LUỒNG ---
+# --- 3. TẢI DỮ LIỆU ---
 
-# A. Đơn hàng (Giữ nguyên logic của bạn)
+# A. Đơn hàng (Giữ nguyên logic cũ)
 all_orders_raw = []
 for p in range(1, 4):
     batch = fetch_pancake_data("orders", {"limit": 100, "mode": "all", "page": p})
@@ -38,17 +38,16 @@ for p in range(1, 4):
     if not data: break
     all_orders_raw.extend(data)
 
-# B. Nhập hàng (Cập nhật endpoint chuẩn)
+# B. Nhập hàng
 purchase_data = fetch_pancake_data("purchase_orders", {"limit": 50}).get("data", [])
 
-# C. Thống kê (Sử dụng endpoint inventory/reports)
-# Lưu ý: Thường Pancake dùng tham số 'mode' hoặc 'type' để phân loại report
-stats_variant_data = fetch_pancake_data("inventory/reports", {"mode": "variant", "limit": 100}).get("data", [])
-stats_product_data = fetch_pancake_data("inventory/reports", {"mode": "product", "limit": 100}).get("data", [])
+# C. Thống kê (Theo JSON Schema mới)
+stats_variant_raw = fetch_pancake_data("inventory/stats", {"type": "variant", "limit": 100}).get("data", [])
+stats_product_raw = fetch_pancake_data("inventory/stats", {"type": "product", "limit": 100}).get("data", [])
 
 # --- 4. XỬ LÝ DỮ LIỆU ---
 
-# --- BẢNG 1 & 2: GIỮ NGUYÊN 100% NHƯ YÊU CẦU ---
+# --- BẢNG 1 & 2: GIỮ NGUYÊN 100% ---
 all_orders, all_items = [], []
 for order in all_orders_raw:
     custom_id = order.get('custom_id')
@@ -87,54 +86,108 @@ for order in all_orders_raw:
             "Tên Kho": order.get('warehouse_info', {}).get('name')
         })
 
-# --- BẢNG 3: NHẬP HÀNG (Lọc dữ liệu linh hoạt) ---
+# --- BẢNG 3: NHẬP HÀNG (Cấu trúc chi tiết) ---
 list_purchase = []
+status_map = {-1: "Mới", 0: "Đã xác nhận", 1: "Đã nhập hàng", 2: "Đã hủy"}
+
 for p in purchase_data:
+    p_status = status_map.get(p.get('status'), "N/A")
     for it in p.get('items', []):
         list_purchase.append({
             "Mã phiếu": p.get('display_id'),
+            "Trạng thái": p_status,
             "Ngày nhập": p.get('time_import') or p.get('inserted_at'),
             "Nhà cung cấp": p.get('supplier', {}).get('name', 'N/A'),
             "Sản phẩm": it.get('product_name'),
-            "SL": it.get('quantity'),
+            "SL Nhập": it.get('quantity'),
             "Giá nhập": it.get('imported_price'),
-            "Tổng tiền phiếu": p.get('total_price'),
-            "Còn nợ": p.get('total_remain_price')
+            "Chiết khấu SP": it.get('discount'),
+            "Tổng SL phiếu": p.get('total_quantity'),
+            "Tổng giá trị phiếu": p.get('total_price'),
+            "Giảm giá phiếu": p.get('discount'),
+            "Phí vận chuyển": p.get('transport_fee'),
+            "Trả trước NCC": p.get('prepaid_debt'),
+            "Còn nợ": p.get('total_remain_price'),
+            "Ghi chú": p.get('note'),
+            "Người tạo": p.get('user', {}).get('name')
         })
 
-# --- BẢNG 4 & 5: THỐNG KÊ (Hỗ trợ cả 2 cấu trúc JSON bạn gửi) ---
-def process_stats(data_raw):
-    processed = []
-    for s in data_raw:
-        v = s.get('variation', {})
-        p = s.get('product', p_info := s.get('product', {})) # Thử lấy từ nhiều nguồn
-        processed.append({
-            "Tên sản phẩm": p.get('name') or v.get('product', {}).get('name'),
-            "Mã hiển thị": v.get('display_id') or p.get('display_id'),
-            "Tồn đầu": s.get('begin_inventory'),
-            "Tổng nhập": s.get('total_import'),
-            "Tổng xuất": s.get('total_export'),
-            "Tồn cuối": s.get('end_inventory'),
-            "Giá trị tồn cuối": s.get('end_inventory_value')
-        })
-    return processed
+# --- BẢNG 4: THỐNG KÊ BIẾN THỂ (Theo JSON Schema 1) ---
+list_stats_v = []
+for s in stats_variant_raw:
+    v = s.get('variation', {})
+    p = v.get('product', {})
+    list_stats_v.append({
+        "Mã mẫu mã": s.get('id'),
+        "Tên sản phẩm": p.get('name'),
+        "Tên biến thể": v.get('name'),
+        "Mã tùy chỉnh": v.get('custom_id'),
+        "Tồn đầu kỳ": s.get('begin_inventory'),
+        "Giá trị tồn đầu": s.get('begin_inventory_value'),
+        "Nhập từ phiếu": s.get('purchase_import'),
+        "Nhập trả hàng": s.get('return_import'),
+        "Nhập kiểm hàng": s.get('stocktaking_import'),
+        "Nhập chuyển kho": s.get('transfer_import'),
+        "Tổng SL nhập": s.get('total_import'),
+        "Tổng giá trị nhập": s.get('total_import_value'),
+        "Xuất bán hàng": s.get('sell_export'),
+        "Xuất chuyển kho": s.get('transfer_export'),
+        "Tổng SL xuất": s.get('total_export'),
+        "Tổng giá trị xuất": s.get('total_export_value'),
+        "Tồn cuối kỳ": s.get('end_inventory'),
+        "Giá trị tồn cuối kỳ": s.get('end_inventory_value')
+    })
 
-list_stats_v = process_stats(stats_variant_data)
-list_stats_p = process_stats(stats_product_data)
+# --- BẢNG 5: THỐNG KÊ SẢN PHẨM (Theo JSON Schema 2) ---
+list_stats_p = []
+for s in stats_product_raw:
+    p = s.get('product', {})
+    list_stats_p.append({
+        "Mã sản phẩm": s.get('id'),
+        "Tên sản phẩm": p.get('name'),
+        "Mã tùy chỉnh": p.get('custom_id'),
+        "Tồn đầu kỳ": s.get('begin_inventory'),
+        "Giá trị tồn đầu kỳ": s.get('begin_inventory_value'),
+        "Tổng số lượng nhập": s.get('total_import'),
+        "Tổng giá trị nhập": s.get('total_import_value'),
+        "Tổng số lượng xuất": s.get('total_export'),
+        "Tổng giá trị xuất": s.get('total_export_value'),
+        "Tồn cuối kỳ": s.get('end_inventory'),
+        "Giá trị tồn cuối kỳ": s.get('end_inventory_value'),
+        "Thời điểm tạo": p.get('inserted_at')
+    })
 
 # --- 5. HIỂN THỊ ---
 st.title("📊 Hệ thống Quản trị Pancake POS")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📑 Đơn hàng", "📦 SP trong đơn", "📥 Nhập hàng", "📊 Thống kê Biến thể", "📈 Thống kê Sản phẩm"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📑 Đơn hàng", 
+    "📦 Sản phẩm trong đơn", 
+    "📥 Nhập hàng", 
+    "📊 Thống kê Biến thể", 
+    "📈 Thống kê Sản phẩm"
+])
 
-with tab1: st.dataframe(pd.DataFrame(all_orders), use_container_width=True)
-with tab2: st.dataframe(pd.DataFrame(all_items), use_container_width=True)
+with tab1:
+    st.dataframe(pd.DataFrame(all_orders), use_container_width=True)
+
+with tab2:
+    st.dataframe(pd.DataFrame(all_items), use_container_width=True)
+
 with tab3:
-    if list_purchase: st.dataframe(pd.DataFrame(list_purchase), use_container_width=True)
-    else: st.info("Chưa có dữ liệu Nhập hàng hoặc Token không đủ quyền truy cập mục 'Nhập hàng'.")
+    if list_purchase:
+        st.dataframe(pd.DataFrame(list_purchase), use_container_width=True)
+    else:
+        st.info("Không lấy được dữ liệu Nhập hàng. Kiểm tra lại quyền API.")
+
 with tab4:
-    if list_stats_v: st.dataframe(pd.DataFrame(list_stats_v), use_container_width=True)
-    else: st.info("Không tìm thấy dữ liệu thống kê biến thể.")
+    if list_stats_v:
+        st.dataframe(pd.DataFrame(list_stats_v), use_container_width=True)
+    else:
+        st.info("Không có dữ liệu thống kê biến thể.")
+
 with tab5:
-    if list_stats_p: st.dataframe(pd.DataFrame(list_stats_p), use_container_width=True)
-    else: st.info("Không tìm thấy dữ liệu thống kê sản phẩm.")
+    if list_stats_p:
+        st.dataframe(pd.DataFrame(list_stats_p), use_container_width=True)
+    else:
+        st.info("Không có dữ liệu thống kê sản phẩm.")
