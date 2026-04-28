@@ -1,9 +1,17 @@
 import streamlit as st
 import requests
 import pandas as pd
+import plotly.express as px
 
 # --- 1. CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(page_title="Pancake ERP Full System", layout="wide")
+
+# Tự động làm mới dữ liệu mỗi 60 giây (Real-time giả lập)
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=60000, key="pancakerefresh")
+except:
+    pass
 
 # Sidebar bảo mật
 st.sidebar.header("⚙️ QUẢN LÝ DỮ LIỆU")
@@ -13,7 +21,7 @@ if password != "123":
     st.stop()
 
 # --- 2. THÔNG TIN API ---
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiUGjGsMahbmcgS-G6vyB0b8OhbiBIVCIsImV4cCI6MTc4NDYyMzUwNCwiYXBwbGljYXRpb24iOjEsInVpZCI6ImE5OTExMjE4LWUzNGYtNDg1Mi1hYWE1LThlNDk4MTUzZjNkMyIsInNlc3Npb25faWQiOiJlYTBhODUyMy0zMmY2LTQ4MTktOGM3OC1iYjRlY2MzMTMyZTgiLCJpYXQiOjE3NzY4NDc1MDQsImZiX2lkIjoiMTIwMzAwMTc0NDgwODYzIiwibG9naW5fc2Vzc2lvbiI6bnVsbCwiZmJfbmFtZSI6IlBoxrDGoW5nIEvhur8gdG_DoW4gSFQifQ.LSw3FdrrNAzBrEYD5IwKPNY6jjvdH3_m9UEtcalFwR4"
+TOKEN = "2b10f2b9145f4b779e30bd635084f5be"
 SHOP_ID = "30224071"
 
 @st.cache_data(ttl=60)
@@ -24,30 +32,41 @@ def fetch_pancake_data(endpoint, params=None):
         base_params.update(params)
     try:
         resp = requests.get(url, params=base_params)
-        return resp.json() if resp.status_code == 200 else {}
+        if resp.status_code == 200:
+            return resp.json()
+        return {}
     except:
         return {}
 
 # --- 3. TẢI DỮ LIỆU ---
 
-# A. Đơn hàng (Giữ nguyên logic cũ)
+# A. Đơn hàng (Lấy dữ liệu từ đầu tháng 4/2026)
 all_orders_raw = []
 for p in range(1, 4):
-    batch = fetch_pancake_data("orders", {"limit": 100, "mode": "all", "page": p})
+    batch = fetch_pancake_data("orders", {
+        "limit": 100, 
+        "mode": "all", 
+        "page": p,
+        "inserted_since": "2026-04-01T00:00:00Z"
+    })
     data = batch.get("data", [])
     if not data: break
     all_orders_raw.extend(data)
 
-# B. Nhập hàng
-purchase_data = fetch_pancake_data("purchase_orders", {"limit": 50}).get("data", [])
+# B. Nhập hàng (Thử nghiệm 2 endpoint để tránh lỗi 404)
+# Thử endpoint kho hàng trước, sau đó thử endpoint chung
+purchase_res = fetch_pancake_data("inventory/purchase_orders", {"limit": 100})
+if not purchase_res.get("data"):
+    purchase_res = fetch_pancake_data("purchase_orders", {"limit": 100})
+purchase_data = purchase_res.get("data", [])
 
-# C. Thống kê (Theo JSON Schema mới)
+# C. Thống kê tồn kho
 stats_variant_raw = fetch_pancake_data("inventory/stats", {"type": "variant", "limit": 100}).get("data", [])
 stats_product_raw = fetch_pancake_data("inventory/stats", {"type": "product", "limit": 100}).get("data", [])
 
-# --- 4. XỬ LÝ DỮ LIỆU ---
+# --- 4. XỬ LÝ DỮ LIỆU (Full Cột) ---
 
-# --- BẢNG 1 & 2: GIỮ NGUYÊN 100% ---
+# --- BẢNG 1 & 2: ĐƠN HÀNG ---
 all_orders, all_items = [], []
 for order in all_orders_raw:
     custom_id = order.get('custom_id')
@@ -86,10 +105,9 @@ for order in all_orders_raw:
             "Tên Kho": order.get('warehouse_info', {}).get('name')
         })
 
-# --- BẢNG 3: NHẬP HÀNG (Cấu trúc chi tiết) ---
+# --- BẢNG 3: NHẬP HÀNG ---
 list_purchase = []
 status_map = {-1: "Mới", 0: "Đã xác nhận", 1: "Đã nhập hàng", 2: "Đã hủy"}
-
 for p in purchase_data:
     p_status = status_map.get(p.get('status'), "N/A")
     for it in p.get('items', []):
@@ -112,7 +130,7 @@ for p in purchase_data:
             "Người tạo": p.get('user', {}).get('name')
         })
 
-# --- BẢNG 4: THỐNG KÊ BIẾN THỂ (Theo JSON Schema 1) ---
+# --- BẢNG 4 & 5: THỐNG KÊ TỒN KHO ---
 list_stats_v = []
 for s in stats_variant_raw:
     v = s.get('variation', {})
@@ -121,51 +139,40 @@ for s in stats_variant_raw:
         "Mã mẫu mã": s.get('id'),
         "Tên sản phẩm": p.get('name'),
         "Tên biến thể": v.get('name'),
-        "Mã tùy chỉnh": v.get('custom_id'),
         "Tồn đầu kỳ": s.get('begin_inventory'),
-        "Giá trị tồn đầu": s.get('begin_inventory_value'),
-        "Nhập từ phiếu": s.get('purchase_import'),
-        "Nhập trả hàng": s.get('return_import'),
-        "Nhập kiểm hàng": s.get('stocktaking_import'),
-        "Nhập chuyển kho": s.get('transfer_import'),
         "Tổng SL nhập": s.get('total_import'),
-        "Tổng giá trị nhập": s.get('total_import_value'),
-        "Xuất bán hàng": s.get('sell_export'),
-        "Xuất chuyển kho": s.get('transfer_export'),
         "Tổng SL xuất": s.get('total_export'),
-        "Tổng giá trị xuất": s.get('total_export_value'),
         "Tồn cuối kỳ": s.get('end_inventory'),
-        "Giá trị tồn cuối kỳ": s.get('end_inventory_value')
+        "Giá trị tồn cuối": s.get('end_inventory_value')
     })
 
-# --- BẢNG 5: THỐNG KÊ SẢN PHẨM (Theo JSON Schema 2) ---
 list_stats_p = []
 for s in stats_product_raw:
     p = s.get('product', {})
     list_stats_p.append({
         "Mã sản phẩm": s.get('id'),
         "Tên sản phẩm": p.get('name'),
-        "Mã tùy chỉnh": p.get('custom_id'),
-        "Tồn đầu kỳ": s.get('begin_inventory'),
-        "Giá trị tồn đầu kỳ": s.get('begin_inventory_value'),
-        "Tổng số lượng nhập": s.get('total_import'),
-        "Tổng giá trị nhập": s.get('total_import_value'),
-        "Tổng số lượng xuất": s.get('total_export'),
-        "Tổng giá trị xuất": s.get('total_export_value'),
-        "Tồn cuối kỳ": s.get('end_inventory'),
-        "Giá trị tồn cuối kỳ": s.get('end_inventory_value'),
-        "Thời điểm tạo": p.get('inserted_at')
+        "Tồn đầu": s.get('begin_inventory'),
+        "Nhập": s.get('total_import'),
+        "Xuất": s.get('total_export'),
+        "Tồn cuối": s.get('end_inventory'),
+        "Giá trị tồn": s.get('end_inventory_value')
     })
 
-# --- 5. HIỂN THỊ ---
+# --- 5. HIỂN THỊ GIAO DIỆN ---
 st.title("📊 Hệ thống Quản trị Pancake POS")
 
+# Dashboard Thống kê
+if all_orders:
+    df_orders = pd.DataFrame(all_orders)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Doanh thu tháng này", f"{df_orders['Tổng tiền (Total Price)'].sum():,.0f}đ")
+    col2.metric("Số lượng đơn", len(df_orders))
+    col3.metric("Số phiếu nhập kho", len(purchase_data))
+    col4.metric("Sản phẩm đang bán", len(list_stats_p))
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📑 Đơn hàng", 
-    "📦 Sản phẩm trong đơn", 
-    "📥 Nhập hàng", 
-    "📊 Thống kê Biến thể", 
-    "📈 Thống kê Sản phẩm"
+    "📑 Đơn hàng", "📦 SP trong đơn", "📥 Nhập hàng", "📊 Tồn Biến thể", "📈 Tồn Sản phẩm"
 ])
 
 with tab1:
@@ -176,18 +183,16 @@ with tab2:
 
 with tab3:
     if list_purchase:
-        st.dataframe(pd.DataFrame(list_purchase), use_container_width=True)
+        df_p = pd.DataFrame(list_purchase)
+        st.dataframe(df_p, use_container_width=True)
+        # Biểu đồ phân bổ nhập hàng theo NCC
+        fig = px.pie(df_p, names='Nhà cung cấp', values='Giá nhập', title='Tỷ trọng chi phí nhập hàng')
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Không lấy được dữ liệu Nhập hàng. Kiểm tra lại quyền API.")
+        st.warning("Không lấy được Nhập hàng. Kiểm tra API Key có quyền 'Inventory' không.")
 
 with tab4:
-    if list_stats_v:
-        st.dataframe(pd.DataFrame(list_stats_v), use_container_width=True)
-    else:
-        st.info("Không có dữ liệu thống kê biến thể.")
+    st.dataframe(pd.DataFrame(list_stats_v), use_container_width=True)
 
 with tab5:
-    if list_stats_p:
-        st.dataframe(pd.DataFrame(list_stats_p), use_container_width=True)
-    else:
-        st.info("Không có dữ liệu thống kê sản phẩm.")
+    st.dataframe(pd.DataFrame(list_stats_p), use_container_width=True)
