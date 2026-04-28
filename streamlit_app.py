@@ -35,19 +35,16 @@ if data:
     for order in data:
         # 1. THÔNG TIN CHUNG, TÀI CHÍNH & NHÂN VIÊN
         order_info = {
-            "ID hệ thống": order.get('id'),
-            "Mã hiển thị": order.get('display_id'),
             "Mã tùy chỉnh (Custom ID)": order.get('custom_id'),
             "Tên Page": order.get('page', {}).get('name'),
             "Page ID": order.get('page_id'),
-            "Tên trạng thái": order.get('status_name'),
             "Trạng thái (Số)": order.get('status'),
             "Ngày tạo": order.get('inserted_at'),
             "Ngày cập nhật": order.get('updated_at'),
             "Tên khách": order.get('bill_full_name'),
             "SĐT khách": order.get('bill_phone_number'),
             "Nhân viên tạo": order.get('creator', {}).get('name'),
-            "Nhân viên cập nhật cuối": order.get('updator', {}).get('name'), # Lấy từ trường updator
+            "Nhân viên cập nhật cuối": order.get('updator', {}).get('name'),
             
             # --- TOÀN BỘ CÁC TRƯỜNG LIÊN QUAN ĐẾN TIỀN ---
             "Tổng tiền (Total Price)": order.get('total_price'),
