@@ -33,14 +33,15 @@ if data:
     all_items = []
 
     for order in data:
-        # 1. THÔNG TIN CHUNG & TÀI CHÍNH & NGUỒN PAGE
+        # 1. THÔNG TIN CHUNG & TÀI CHÍNH (Đã thêm Tên trạng thái & Ngày cập nhật)
         order_info = {
-            "Mã đơn (ID)": order.get('id'),
             "Mã hiển thị": order.get('display_id'),
             "Tên Page": order.get('page', {}).get('name'),
             "Page ID": order.get('page_id'),
-            "Trạng thái": order.get('status'),
+            "Trạng thái (Số)": order.get('status'),
+            "Tên trạng thái": order.get('status_name'), # Trường status_name từ JSON
             "Ngày tạo": order.get('inserted_at'),
+            "Ngày cập nhật": order.get('updated_at'), # Trường updated_at từ JSON
             "Tên khách": order.get('bill_full_name'),
             "SĐT khách": order.get('bill_phone_number'),
             "Nguồn Ads": order.get('ads_source'),
@@ -52,29 +53,20 @@ if data:
         }
         all_orders.append(order_info)
 
-        # 2. CHI TIẾT SẢN PHẨM (ĐÃ THÊM TOÀN BỘ CÁC LOẠI MÃ)
+        # 2. CHI TIẾT SẢN PHẨM
         items = order.get('items', [])
         if isinstance(items, list):
             for item in items:
                 v_info = item.get('variation_info', {})
-                w_info = item.get('variations_warehouses', [{}])[0]
-                
                 all_items.append({
                     "Mã đơn (Display)": order.get('display_id'),
                     "Tên sản phẩm": v_info.get('name'),
                     "Chi tiết": v_info.get('detail'),
-                    # --- CÁC LOẠI MÃ LIÊN QUAN ĐẾN SẢN PHẨM ---
                     "Mã SKU (Var ID)": v_info.get('id'),
                     "Mã SP Gốc (Prod ID)": v_info.get('product_id'),
-                    "Mã ID nội bộ (Item ID)": item.get('id'),
-                    "Mã ID Kho (Warehouse ID)": item.get('warehouse_id'),
-                    "Mã Vạch (Barcode)": v_info.get('barcode'),
-                    "Mã Custom ID": v_info.get('custom_id'),
-                    # --- THÔNG TIN GIÁ & KHO ---
                     "Số lượng": item.get('quantity'),
                     "Giá bán niêm yết": v_info.get('retail_price'),
                     "Giá nhập cuối": v_info.get('last_imported_price'),
-                    "Vị trí kệ": w_info.get('shelf_position'),
                     "Tên Kho": order.get('warehouse_info', {}).get('name')
                 })
 
@@ -86,10 +78,11 @@ if data:
     tab1, tab2 = st.tabs(["📑 Đơn hàng & Tài chính", "📦 Chi tiết Sản phẩm & Mã định danh"])
 
     with tab1:
+        st.subheader("Bảng tổng hợp Đơn hàng & Trạng thái mới nhất")
         st.dataframe(df_orders, use_container_width=True)
 
     with tab2:
-        st.subheader("Bảng chi tiết Sản phẩm (Đầy đủ các loại Mã)")
+        st.subheader("Bảng chi tiết Sản phẩm (SKU & Giá)")
         st.dataframe(df_items, use_container_width=True)
 
 else:
