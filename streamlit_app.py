@@ -33,9 +33,12 @@ if data:
     all_items = []
 
     for order in data:
+        # Lấy Custom ID chung để dùng cho cả 2 bảng
+        custom_id = order.get('custom_id')
+
         # 1. THÔNG TIN CHUNG, TÀI CHÍNH & NHÂN VIÊN
         order_info = {
-            "Mã tùy chỉnh (Custom ID)": order.get('custom_id'),
+            "Mã tùy chỉnh (Custom ID)": custom_id,
             "Tên Page": order.get('page', {}).get('name'),
             "Page ID": order.get('page_id'),
             "Trạng thái (Số)": order.get('status'),
@@ -46,7 +49,7 @@ if data:
             "Nhân viên tạo": order.get('creator', {}).get('name'),
             "Nhân viên cập nhật cuối": order.get('updator', {}).get('name'),
             
-            # --- TOÀN BỘ CÁC TRƯỜNG LIÊN QUAN ĐẾN TIỀN ---
+            # --- CÁC TRƯỜNG LIÊN QUAN ĐẾN TIỀN ---
             "Tổng tiền (Total Price)": order.get('total_price'),
             "Tiền thu hộ (COD)": order.get('cod'),
             "Giảm giá đơn (Discount)": order.get('discount'),
@@ -65,7 +68,7 @@ if data:
             for item in items:
                 v_info = item.get('variation_info', {})
                 all_items.append({
-                    "Mã đơn (Display)": order.get('display_id'),
+                    "Mã đơn (Custom ID)": custom_id, # Thay đổi từ display_id sang custom_id
                     "Tên sản phẩm": v_info.get('name'),
                     "Chi tiết": v_info.get('detail'),
                     "Mã SKU (Var ID)": v_info.get('id'),
