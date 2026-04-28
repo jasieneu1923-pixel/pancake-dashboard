@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 
 # --- 1. CẤU HÌNH GIAO DIỆN ---
-st.set_page_config(page_title="Pancake ERP Full Data System", layout="wide")
+st.set_page_config(page_title="Pancake ERP Full System", layout="wide")
 
 # Sidebar bảo mật
 st.sidebar.header("⚙️ QUẢN LÝ DỮ LIỆU")
@@ -27,31 +27,32 @@ def fetch_pancake_data(endpoint, extra_params=None):
         return resp.json() if resp.status_code == 200 else {}
     except: return {}
 
-# --- 3. TẢI DỮ LIỆU ĐA NGUỒN ---
-
-# A. Lấy dữ liệu Đơn hàng (Vòng lặp lấy nhiều trang)
+# --- 3. TẢI DỮ LIỆU ---
+# Lấy dữ liệu Đơn hàng (giữ logic cũ)
 all_orders_raw = []
-pages_to_fetch = 5 # Bạn có thể chỉnh lên 10 để lấy 1000 đơn
+pages_to_fetch = 5 
 for p in range(1, pages_to_fetch + 1):
     batch = fetch_pancake_data("orders", {"limit": 100, "mode": "all", "page": p})
     page_data = batch.get("data", [])
     if not page_data: break
     all_orders_raw.extend(page_data)
 
-# B. Lấy dữ liệu Sản phẩm & Tồn kho (Product List / Variations)
-product_resp = fetch_pancake_data("variations", {"limit": 100, "is_get_inventory": "true"})
-product_raw = product_resp.get("data", [])
+# Lấy dữ liệu mới
+purchase_raw = fetch_pancake_data("purchase_orders", {"limit": 50}).get("data", [])
+stats_variant_raw = fetch_pancake_data("stats/variants", {"limit": 50}).get("data", [])
+stats_product_raw = fetch_pancake_data("stats/products", {"limit": 50}).get("data", [])
 
 # --- 4. XỬ LÝ DỮ LIỆU ---
 
-# --- BẢNG 1 & 2: GIỮ NGUYÊN TỪ CODE CŨ ---
-list_orders = []
-list_item_orders = []
+# --- BẢNG 1 & 2: GIỮ NGUYÊN Y HỆT CODE GỐC CỦA BẠN ---
+all_orders = []
+all_items = []
 
 for order in all_orders_raw:
     custom_id = order.get('custom_id')
-    # Thông tin tài chính
-    list_orders.append({
+
+    # 1. THÔNG TIN CHUNG, TÀI CHÍNH & NHÂN VIÊN
+    all_orders.append({
         "Mã tùy chỉnh (Custom ID)": custom_id,
         "Tên Page": order.get('page', {}).get('name'),
         "Page ID": order.get('page_id'),
@@ -72,12 +73,13 @@ for order in all_orders_raw:
         "Tiền mặt": order.get('cash'),
         "Nguồn Ads": order.get('ads_source')
     })
-    # Chi tiết sản phẩm trong đơn
+
+    # 2. CHI TIẾT SẢN PHẨM
     items = order.get('items', [])
     if isinstance(items, list):
         for item in items:
             v_info = item.get('variation_info', {})
-            list_item_orders.append({
+            all_items.append({
                 "Mã đơn (Custom ID)": custom_id,
                 "Tên sản phẩm": v_info.get('name'),
                 "Chi tiết": v_info.get('detail'),
@@ -89,79 +91,66 @@ for order in all_orders_raw:
                 "Tên Kho": order.get('warehouse_info', {}).get('name')
             })
 
-# --- BẢNG 3 & 4: SẢN PHẨM & TỒN KHO (THEO JSON MỚI) ---
-list_products = []
-list_inventory_detail = []
-
-for v in product_raw:
-    # Xử lý Màu/Size từ fields
-    fields = v.get('fields') or []
-    attr_map = {str(f.get('name', '')).lower(): f.get('value') for f in fields if isinstance(f, dict)}
-    
-    # Xử lý Giá sỉ từ price_table
-    ptable = v.get('price_table') or []
-    v_wholesale = 0
-    if isinstance(ptable, list):
-        v_wholesale = next((p.get('price') for p in ptable if isinstance(p, dict) and "sỉ" in str(p.get('name', '')).lower()), 0)
-
-    # Bảng 3: Thông tin sản phẩm (Biến thể)
-    list_products.append({
-        "Mã SKU": v.get('display_id'),
-        "Tên sản phẩm": v.get('product', {}).get('name') if v.get('product') else "N/A",
-        "Màu": attr_map.get('màu', ''),
-        "Size": attr_map.get('size', ''),
-        "Giá bán lẻ": v.get('retail_price', 0),
-        "Giá bán sỉ": v_wholesale,
-        "Giá tại quầy": v.get('price_at_counter'),
-        "Giá nhập TB": v.get('average_imported_price'),
-        "Giá nhập cuối": v.get('last_imported_price'),
-        "Barcode": v.get('barcode'),
-        "Bán âm": "Cho phép" if v.get('is_sell_negative_variation') else "Không",
-        "Ngày tạo SP": v.get('inserted_at')
-    })
-
-    # Bảng 4: Tồn kho thực tế từng chi nhánh
-    warehouses = v.get('variations_warehouses') or []
-    for wh in warehouses:
-        list_inventory_detail.append({
-            "Mã SKU": v.get('display_id'),
-            "Warehouse ID": wh.get('warehouse_id'),
-            "Tồn thực tế": wh.get('actual_remain_quantity'),
-            "Tồn khả dụng": wh.get('remain_quantity'),
-            "Hàng đang về": wh.get('pending_quantity'),
-            "Tổng tồn": wh.get('total_quantity'),
-            "Tốc độ bán TB": wh.get('selling_avg')
+# --- BẢNG 3: NHẬP HÀNG (DỰA TRÊN JSON MỚI) ---
+list_purchase = []
+for p in purchase_raw:
+    p_id = p.get('display_id')
+    for it in p.get('items', []):
+        list_purchase.append({
+            "Mã phiếu nhập": p_id,
+            "Nhà cung cấp": p.get('supplier', {}).get('name'),
+            "Sản phẩm": it.get('product_name'),
+            "Số lượng": it.get('quantity'),
+            "Giá nhập": it.get('imported_price'),
+            "Thanh toán trước": p.get('prepaid_debt'),
+            "Tiền còn nợ": p.get('total_remain_price'),
+            "Ngày nhập": p.get('time_import'),
+            "Ghi chú": p.get('note')
         })
 
-# Chuyển đổi thành DataFrame
-df_orders = pd.DataFrame(list_orders)
-df_items = pd.DataFrame(list_item_orders)
-df_products = pd.DataFrame(list_products)
-df_inventory = pd.DataFrame(list_inventory_detail)
+# --- BẢNG 4: STATISTICS BY VARIANT ---
+list_stats_variant = []
+for sv in stats_variant_raw:
+    v = sv.get('variation', {})
+    fields = v.get('fields') or []
+    attr = {f.get('name'): f.get('value') for f in fields}
+    list_stats_variant.append({
+        "Mã SKU": v.get('custom_id'),
+        "Tên sản phẩm": v.get('product', {}).get('name'),
+        "Màu": attr.get('Color', ''), "Size": attr.get('Size', ''),
+        "Tồn đầu": sv.get('begin_inventory'), "Tổng nhập": sv.get('total_import'),
+        "Tổng xuất": sv.get('total_export'), "Tồn cuối": sv.get('end_inventory'),
+        "Giá trị tồn cuối": sv.get('end_inventory_value')
+    })
+
+# --- BẢNG 5: STATISTICS BY PRODUCT ---
+list_stats_product = []
+for sp in stats_product_raw:
+    p_info = sp.get('product', {})
+    list_stats_product.append({
+        "Mã SP": p_info.get('custom_id'),
+        "Tên sản phẩm": p_info.get('name'),
+        "Tồn đầu kỳ": sp.get('begin_inventory'),
+        "Nhập từ phiếu": sp.get('purchase_import'),
+        "Xuất bán hàng": sp.get('sell_export'),
+        "Tồn cuối kỳ": sp.get('end_inventory'),
+        "Giá trị tồn cuối": sp.get('end_inventory_value')
+    })
 
 # --- 5. HIỂN THỊ ---
-st.title("📊 Hệ thống Quản trị & Trích xuất Dữ liệu Pancake POS")
-st.info(f"Dữ liệu hiện tại: {len(df_orders)} Đơn hàng | {len(df_products)} Sản phẩm biến thể.")
+st.title("📊 Hệ thống Trích xuất Dữ liệu Pancake POS")
+st.info(f"Đã tải thành công {len(all_orders)} đơn hàng.")
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📑 Đơn hàng & Tài chính", 
     "📦 Sản phẩm trong đơn", 
-    "💎 Danh mục Sản phẩm (SKU)",
-    "🏠 Tồn kho chi tiết"
+    "📥 Nhập hàng", 
+    "📊 Thống kê Biến thể", 
+    "📈 Thống kê Sản phẩm"
 ])
 
-with tab1:
-    st.subheader("Bảng tổng hợp Đơn hàng & Tài chính")
-    st.dataframe(df_orders, use_container_width=True)
-
-with tab2:
-    st.subheader("Bảng kê chi tiết sản phẩm theo mã đơn")
-    st.dataframe(df_items, use_container_width=True)
-
-with tab3:
-    st.subheader("Danh mục Sản phẩm, Thuộc tính & Giá")
-    st.dataframe(df_products, use_container_width=True)
-
-with tab4:
-    st.subheader("Phân bổ tồn kho thực tế theo kho/chi nhánh")
-    st.dataframe(df_inventory, use_container_width=True)
+with tab1: st.dataframe(pd.DataFrame(all_orders), use_container_width=True)
+with tab2: st.dataframe(pd.DataFrame(all_items), use_container_width=True)
+with tab3: st.dataframe(pd.DataFrame(list_purchase), use_container_width=True)
+with tab4: st.dataframe(pd.DataFrame(list_stats_variant), use_container_width=True)
+with tab5: st.dataframe(pd.DataFrame(list_stats_product), use_container_width=True)
