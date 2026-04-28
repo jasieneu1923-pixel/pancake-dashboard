@@ -1,133 +1,108 @@
 import streamlit as st
 import requests
 import pandas as pd
+from datetime import datetime
 
-# --- 1. CẤU HÌNH GIAO DIỆN & BẢO MẬT ---
-st.set_page_config(page_title="Pancake ERP Full System", layout="wide")
+# --- CẤU HÌNH GIAO DIỆN ---
+st.set_page_config(page_title="Pancake Full Data Extraction", layout="wide")
 
-st.sidebar.header("⚙️ QUẢN LÝ & BỘ LỌC")
+# Sidebar bảo mật
+st.sidebar.header("⚙️ QUẢN LÝ DỮ LIỆU")
 password = st.sidebar.text_input("Mật khẩu", type="password")
 if password != "123":
-    st.warning("Vui lòng nhập mật khẩu (123) để truy cập hệ thống.")
+    st.warning("Vui lòng nhập mật khẩu (123) để xem dữ liệu.")
     st.stop()
 
-# --- 2. THÔNG TIN API ---
+# --- THÔNG TIN API ---
 TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiUGjGsMahbmcgS-G6vyB0b8OhbiBIVCIsImV4cCI6MTc4NDYyMzUwNCwiYXBwbGljYXRpb24iOjEsInVpZCI6ImE5OTExMjE4LWUzNGYtNDg1Mi1hYWE1LThlNDk4MTUzZjNkMyIsInNlc3Npb25faWQiOiJlYTBhODUyMy0zMmY2LTQ4MTktOGM3OC1iYjRlY2MzMTMyZTgiLCJpYXQiOjE3NzY4NDc1MDQsImZiX2lkIjoiMTIwMzAwMTc0NDgwODYzIiwibG9naW5fc2Vzc2lvbiI6bnVsbCwiZmJfbmFtZSI6IlBoxrDGoW5nIEvhur8gdG_DoW4gSFQifQ.LSw3FdrrNAzBrEYD5IwKPNY6jjvdH3_m9UEtcalFwR4"
 SHOP_ID = "30224071"
 
 @st.cache_data(ttl=60)
-def fetch_pancake_data(endpoint, extra_params=None):
-    url = f"https://pos.pages.fm/api/v1/shops/{SHOP_ID}/{endpoint}"
-    params = {"access_token": TOKEN}
-    if extra_params: params.update(extra_params)
-    try:
-        resp = requests.get(url, params=params)
-        return resp.json() if resp.status_code == 200 else {}
-    except: return {}
+def fetch_all_data(pages_to_fetch=5): # Bạn có thể tăng số page muốn lấy ở đây
+    all_data = []
+    url = f"https://pos.pages.fm/api/v1/shops/{SHOP_ID}/orders"
+    
+    for page in range(1, pages_to_fetch + 1):
+        params = {
+            "access_token": TOKEN, 
+            "limit": 100, 
+            "mode": "all",
+            "page": page
+        }
+        try:
+            resp = requests.get(url, params=params)
+            if resp.status_code == 200:
+                page_data = resp.json().get("data", [])
+                if not page_data: # Nếu trang đó không có dữ liệu thì dừng lại
+                    break
+                all_data.extend(page_data)
+            else:
+                break
+        except:
+            break
+    return all_data
 
-# --- 3. TẢI DỮ LIỆU ---
-all_orders_raw = []
-for p in range(1, 4):
-    batch = fetch_pancake_data("orders", {"limit": 100, "mode": "all", "page": p})
-    if batch.get("data"):
-        all_orders_raw.extend(batch["data"])
-    else: break
+# Tăng số lượng trang muốn lấy tại đây (ví dụ: lấy 10 trang tương ứng ~1000 đơn)
+data = fetch_all_data(pages_to_fetch=10) 
 
-purchase_raw = fetch_pancake_data("purchase_orders", {"limit": 50}).get("data", [])
-inventory_raw = fetch_pancake_data("variations", {"limit": 100, "is_get_inventory": "true"}).get("data", [])
+if data:
+    all_orders = []
+    all_items = []
 
-# --- 4. XỬ LÝ DỮ LIỆU ---
-
-# Bảng Đơn hàng & Sản phẩm đơn
-df_orders = pd.DataFrame()
-df_order_items = pd.DataFrame()
-
-if all_orders_raw:
-    orders_data, items_in_orders = [], []
-    for order in all_orders_raw:
+    for order in data:
         custom_id = order.get('custom_id')
-        orders_data.append({
+
+        # 1. THÔNG TIN CHUNG, TÀI CHÍNH & NHÂN VIÊN
+        all_orders.append({
             "Mã tùy chỉnh (Custom ID)": custom_id,
             "Tên Page": order.get('page', {}).get('name'),
+            "Page ID": order.get('page_id'),
+            "Trạng thái (Số)": order.get('status'),
             "Ngày tạo": order.get('inserted_at'),
+            "Ngày cập nhật": order.get('updated_at'),
             "Tên khách": order.get('bill_full_name'),
             "SĐT khách": order.get('bill_phone_number'),
-            "Tổng tiền": order.get('total_price'),
-            "COD": order.get('cod'),
-            "Giảm giá": order.get('discount'),
-            "Phí ship": order.get('shipping_fee'),
-            "Chuyển khoản": order.get('transfer_money'),
+            "Nhân viên tạo": order.get('creator', {}).get('name'),
+            "Nhân viên cập nhật cuối": order.get('updator', {}).get('name'),
+            "Tổng tiền (Total Price)": order.get('total_price'),
+            "Tiền thu hộ (COD)": order.get('cod'),
+            "Giảm giá đơn (Discount)": order.get('discount'),
+            "Tổng giảm giá (Total Discount)": order.get('total_discount'),
+            "Phí ship báo khách (Shipping Fee)": order.get('shipping_fee'),
+            "Khách trả phí (Customer Pay Fee)": order.get('customer_pay_fee'),
+            "Tiền chuyển khoản": order.get('transfer_money'),
             "Tiền mặt": order.get('cash'),
-            "Nhân viên": order.get('creator', {}).get('name')
+            "Nguồn Ads": order.get('ads_source')
         })
-        for item in order.get('items', []):
-            v_info = item.get('variation_info', {})
-            items_in_orders.append({
-                "Mã đơn (Custom ID)": custom_id,
-                "Tên sản phẩm": v_info.get('name'),
-                "Chi tiết": v_info.get('detail'),
-                "Mã SKU": v_info.get('id'),
-                "Số lượng": item.get('quantity'),
-                "Giá niêm yết": v_info.get('retail_price'),
-                "Giá nhập": v_info.get('last_imported_price')
-            })
-    df_orders = pd.DataFrame(orders_data)
-    df_order_items = pd.DataFrame(items_in_orders)
 
-# Bảng Nhập hàng
-df_purchase = pd.DataFrame([{
-    "Mã phiếu nhập": p.get('display_id'),
-    "Nhà cung cấp": p.get('supplier', {}).get('name') if p.get('supplier') else "N/A",
-    "Trạng thái": p.get('status_name'),
-    "Tổng tiền": p.get('total_price'),
-    "Đã trả NCC": p.get('total_paid'),
-    "Ngày tạo": p.get('inserted_at')
-} for p in purchase_raw])
+        # 2. CHI TIẾT SẢN PHẨM
+        items = order.get('items', [])
+        if isinstance(items, list):
+            for item in items:
+                v_info = item.get('variation_info', {})
+                all_items.append({
+                    "Mã đơn (Custom ID)": custom_id,
+                    "Tên sản phẩm": v_info.get('name'),
+                    "Chi tiết": v_info.get('detail'),
+                    "Mã SKU (Var ID)": v_info.get('id'),
+                    "Mã SP Gốc (Prod ID)": v_info.get('product_id'),
+                    "Số lượng": item.get('quantity'),
+                    "Giá bán niêm yết": v_info.get('retail_price'),
+                    "Giá nhập cuối": v_info.get('last_imported_price'),
+                    "Tên Kho": order.get('warehouse_info', {}).get('name')
+                })
 
-# Bảng Tồn kho (ĐÃ SỬA LỖI TYPEERROR & INDEXERROR)
-inventory_processed = []
-for v in inventory_raw:
-    # 1. Xử lý thuộc tính (Màu, Size)
-    fields = v.get('fields') or []
-    attr_map = {str(f.get('name', '')).lower(): f.get('value') for f in fields if isinstance(f, dict)}
-    
-    # 2. Xử lý thông tin kho an toàn
-    warehouses = v.get('variations_warehouses') or []
-    wh = warehouses[0] if isinstance(warehouses, list) and len(warehouses) > 0 else {}
-    
-    # 3. Xử lý bảng giá an toàn (SỬA LỖI TYPEERROR TẠI ĐÂY)
-    ptable = v.get('price_table') or []
-    v_wholesale = 0
-    if isinstance(ptable, list):
-        v_wholesale = next((p.get('price') for p in ptable if isinstance(p, dict) and "sỉ" in str(p.get('name', '')).lower()), 0)
+    df_orders = pd.DataFrame(all_orders)
+    df_items = pd.DataFrame(all_items)
 
-    inventory_processed.append({
-        "Mã SKU": v.get('display_id'),
-        "Tên sản phẩm": v.get('product', {}).get('name') if v.get('product') else "N/A",
-        "Màu": attr_map.get('màu', ''),
-        "Size": attr_map.get('size', ''),
-        "Tồn khả dụng": v.get('remain_quantity', 0),
-        "Tồn thực tế kho": wh.get('actual_remain_quantity', 0),
-        "Tổng tồn": wh.get('total_quantity', 0),
-        "Hàng đang về": wh.get('pending_quantity', 0),
-        "Giá nhập cuối": v.get('last_imported_price', 0),
-        "Giá bán lẻ": v.get('retail_price', 0),
-        "Giá bán sỉ": v_wholesale,
-        "Barcode": v.get('barcode', '')
-    })
-df_inventory = pd.DataFrame(inventory_processed)
+    st.title("📊 Hệ thống Trích xuất Dữ liệu Pancake POS")
+    st.info(f"Đã tải thành công {len(df_orders)} đơn hàng.") # Hiển thị số đơn đã lấy
 
-# --- 5. HIỂN THỊ ---
-st.title("🚀 Hệ thống Quản trị Tổng thể Pancake POS")
+    tab1, tab2 = st.tabs(["📑 Đơn hàng & Tài chính", "📦 Chi tiết Sản phẩm & Mã định danh"])
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📑 Đơn hàng & Tài chính", 
-    "📦 Chi tiết Sản phẩm Đơn", 
-    "📥 Lịch sử Nhập hàng", 
-    "🏠 Tồn kho chi tiết"
-])
-
-with tab1: st.dataframe(df_orders, use_container_width=True)
-with tab2: st.dataframe(df_order_items, use_container_width=True)
-with tab3: st.dataframe(df_purchase, use_container_width=True)
-with tab4: st.dataframe(df_inventory, use_container_width=True)
+    with tab1:
+        st.dataframe(df_orders, use_container_width=True)
+    with tab2:
+        st.dataframe(df_items, use_container_width=True)
+else:
+    st.info("Không tìm thấy dữ liệu hoặc lỗi kết nối API.")
