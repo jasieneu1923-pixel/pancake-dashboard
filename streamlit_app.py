@@ -2,94 +2,82 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# --- CẤU HÌNH THEO TÀI LIỆU ---
+# --- CẤU HÌNH THEO TÀI LIỆU API ---
 API_KEY = "faea6078b156431fa19f7ac903dda137"
 SHOP_ID = "30224071"
 BASE_URL = "https://pos.pages.fm/api/v1"
 
-def call_pancake_api(endpoint, params=None):
-    """Hàm gọi API dùng chung cho tất cả các bảng"""
+def call_pancake(endpoint, params=None):
+    """Hàm gọi API chuẩn theo cấu trúc paths trong tài liệu"""
     url = f"{BASE_URL}/shops/{SHOP_ID}/{endpoint}"
-    # Tài liệu quy định tham số bảo mật là 'api_key' truyền qua query
+    # Tài liệu quy định tham số bảo mật là 'api_key' nằm ở 'query'
     query_params = {"api_key": API_KEY}
     if params:
         query_params.update(params)
     
     try:
-        response = requests.get(url, params=query_params, timeout=15)
+        response = requests.get(url, params=query_params, timeout=20)
         return response.json()
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-# --- GIAO DIỆN ---
-st.set_page_config(page_title="Pancake ERP Full Data", layout="wide")
-st.title("🚀 Hệ thống Khai thác Toàn bộ Dữ liệu Pancake POS")
+# --- GIAO DIỆN STREAMLIT ---
+st.set_page_config(page_title="Pancake Data Center", layout="wide")
+st.title("🛡️ Hệ thống Khai thác Dữ liệu Pancake POS")
 
-# Tạo các Tab tương ứng với các phân mục trong tài liệu API
-tabs = st.tabs([
-    "📦 Đơn hàng", 
-    "🛒 Sản phẩm", 
-    "📥 Nhập hàng", 
-    "📉 Tồn kho", 
-    "👥 Khách hàng",
-    "🏢 Cửa hàng"
-])
+# Danh sách các bảng (Endpoints) có trong tài liệu api-1.json
+menu = {
+    "📑 Đơn hàng": "orders",
+    "🛒 Sản phẩm": "products",
+    "📉 Tồn kho": "inventory/stats",
+    "📥 Nhập hàng": "inventory/purchase_orders",
+    "👥 Khách hàng": "customers",
+    "🏷️ Danh mục": "categories"
+}
 
-# 1. BẢNG ĐƠN HÀNG (Orders)
-with tabs[0]:
-    st.subheader("Danh sách Đơn hàng")
-    col1, col2 = st.columns(2)
-    with col1:
-        date_filter = st.date_input("Từ ngày", value=pd.to_datetime("2026-04-24"))
-    
-    if st.button("Lấy dữ liệu Đơn hàng"):
-        params = {"inserted_since": f"{date_filter} 00:00:00", "mode": "all"}
-        res = call_pancake_api("orders", params)
-        if res.get("success") and res.get("data"):
-            st.dataframe(pd.DataFrame(res["data"]), use_container_width=True)
-        else:
-            st.warning("Không có dữ liệu đơn hàng.")
+tab_list = st.tabs(list(menu.keys()))
 
-# 2. BẢNG SẢN PHẨM (Products)
-with tabs[1]:
-    st.subheader("Danh mục Sản phẩm")
-    if st.button("Lấy danh sách Sản phẩm"):
-        res = call_pancake_api("products", {"limit": 100})
-        if res.get("data"):
-            st.dataframe(pd.DataFrame(res["data"]), use_container_width=True)
+for i, (label, endpoint) in enumerate(menu.items()):
+    with tab_list[i]:
+        st.subheader(f"Dữ liệu từ bảng: {label}")
+        
+        # Cấu hình riêng cho từng loại dữ liệu
+        params = {}
+        if endpoint == "orders":
+            col1, col2 = st.columns(2)
+            with col1:
+                date = st.date_input("Lấy đơn từ ngày", value=pd.to_datetime("2026-04-24"), key=f"date_{endpoint}")
+                params = {"inserted_since": f"{date} 00:00:00", "mode": "all"}
+        
+        if endpoint == "inventory/stats":
+            params = {"type": "variant"} # Lấy tồn kho chi tiết theo màu/size
+            
+        if st.button(f"Tải dữ liệu {label}", key=f"btn_{endpoint}"):
+            with st.spinner("Đang truy xuất..."):
+                res = call_pancake(endpoint, params)
+                
+                if res.get("success") or "data" in res:
+                    data = res.get("data", [])
+                    if data:
+                        df = pd.DataFrame(data)
+                        st.success(f"Đã lấy thành công {len(df)} dòng dữ liệu.")
+                        st.dataframe(df, use_container_width=True)
+                        
+                        # Cho phép tải về file Excel/CSV
+                        csv = df.to_csv(index=False).encode('utf-8-sig')
+                        st.download_button("📥 Tải file CSV", csv, f"{endpoint}.csv", "text/csv")
+                    else:
+                        st.warning("Bảng này hiện tại chưa có dữ liệu.")
+                else:
+                    st.error(f"Lỗi API: {res.get('message', 'Không rõ nguyên nhân')}")
+                    st.info("Mẹo: Kiểm tra lại xem API Key đã được tích quyền cho bảng này chưa.")
 
-# 3. BẢNG NHẬP HÀNG (Purchase Orders)
-with tabs[2]:
-    st.subheader("Phiếu nhập kho")
-    if st.button("Lấy phiếu nhập"):
-        # Đường dẫn theo tài liệu: inventory/purchase_orders
-        res = call_pancake_api("inventory/purchase_orders")
-        if res.get("data"):
-            st.dataframe(pd.DataFrame(res["data"]), use_container_width=True)
-
-# 4. BẢNG TỒN KHO (Inventory Stats)
-with tabs[3]:
-    st.subheader("Thống kê Tồn kho")
-    st.info("Lấy dữ liệu tồn kho theo biến thể sản phẩm")
-    if st.button("Xem tồn kho"):
-        res = call_pancake_api("inventory/stats", {"type": "variant"})
-        if res.get("data"):
-            st.dataframe(pd.DataFrame(res["data"]), use_container_width=True)
-
-# 5. BẢNG KHÁCH HÀNG (Customers)
-with tabs[4]:
-    st.subheader("Danh sách Khách hàng")
-    if st.button("Lấy dữ liệu khách"):
-        res = call_pancake_api("customers", {"limit": 50})
-        if res.get("data"):
-            st.dataframe(pd.DataFrame(res["data"]), use_container_width=True)
-
-# 6. THÔNG TIN CỬA HÀNG (Shop Info)
-with tabs[5]:
-    st.subheader("Thông tin Shop & Cấu hình")
-    if st.button("Xem thông tin Shop"):
-        # Đặc biệt: endpoint lấy thông tin shop chính là GET /shops/{id}
-        url = f"{BASE_URL}/shops/{SHOP_ID}"
-        res = requests.get(url, params={"api_key": API_KEY}).json()
-        if res.get("success"):
-            st.json(res["data"])
+# --- KIỂM TRA THÔNG TIN SHOP ---
+st.sidebar.header("Cửa hàng hiện tại")
+if st.sidebar.button("Xem thông tin Shop"):
+    # Theo tài liệu: GET /shops/{id}
+    shop_res = requests.get(f"{BASE_URL}/shops/{SHOP_ID}", params={"api_key": API_KEY}).json()
+    if shop_res.get("success"):
+        st.sidebar.json(shop_res["data"])
+    else:
+        st.sidebar.error("Không thể lấy thông tin Shop.")
