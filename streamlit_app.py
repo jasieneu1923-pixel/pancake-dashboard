@@ -5,75 +5,63 @@ import pandas as pd
 # --- 1. CẤU HÌNH ---
 st.set_page_config(page_title="Pancake ERP Full System", layout="wide")
 
-# Token mới bạn vừa cung cấp
 TOKEN = "3fd9730696d6408da6df2e9e342f8952"
 SHOP_ID = "30224071"
 
-@st.cache_data(ttl=30)
 def fetch_pancake_data(endpoint, params=None):
     url = f"https://pos.pages.fm/api/v1/shops/{SHOP_ID}/{endpoint}"
     base_params = {"access_token": TOKEN}
     if params:
         base_params.update(params)
     try:
-        # Tăng timeout lên 15s để tránh lỗi mạng
         resp = requests.get(url, params=base_params, timeout=15)
-        if resp.status_code == 200:
-            return resp.json()
-        return {"error": resp.status_code, "text": resp.text}
+        return resp.json() if resp.status_code == 200 else {"error": resp.status_code, "text": resp.text}
     except Exception as e:
-        return {"error": "ConnectionError", "text": str(e)}
+        return {"error": "Connection", "text": str(e)}
 
 # --- 2. TẢI DỮ LIỆU ---
 
-# A. Đơn hàng: Quét từ ngày 24/04/2026 (Dùng định dạng YYYY-MM-DD)
-order_res = fetch_pancake_data("orders", {
-    "limit": 50, 
-    "mode": "all",
-    "inserted_since": "2026-04-24 00:00:00"
-})
+# Bước A: Lấy toàn bộ đơn hàng (KHÔNG LỌC NGÀY để kiểm tra)
+order_res = fetch_pancake_data("orders", {"limit": 50, "mode": "all"})
 all_orders_raw = order_res.get("data", [])
 
-# B. Nhập hàng: Tự động sửa lỗi 404 bằng cách thử cả 2 endpoint phổ biến
-purchase_res = fetch_pancake_data("purchase_orders", {"limit": 100})
-if "error" in purchase_res or not purchase_res.get("data"):
-    # Endpoint dự phòng nếu cái đầu bị 404 như trong Postman của bạn
-    purchase_res = fetch_pancake_data("inventory/purchase_orders", {"limit": 100})
+# Bước B: Lấy danh sách phiếu nhập (Thử cả 2 đường dẫn)
+purchase_res = fetch_pancake_data("purchase_orders", {"limit": 50})
+if not purchase_res.get("data"):
+    purchase_res = fetch_pancake_data("inventory/purchase_orders", {"limit": 50})
 purchase_data = purchase_res.get("data", [])
 
-# C. Tồn kho: Lấy toàn bộ thống kê
-stats_v_res = fetch_pancake_data("inventory/stats", {"type": "variant", "limit": 100})
-stats_p_res = fetch_pancake_data("inventory/stats", {"type": "product", "limit": 100})
-stats_v_raw = stats_v_res.get("data", [])
-stats_p_raw = stats_p_res.get("data", [])
+# Bước C: Lấy tồn kho sản phẩm
+inventory_res = fetch_pancake_data("inventory/stats", {"type": "product", "limit": 100})
+inventory_data = inventory_res.get("data", [])
 
-# --- 3. HIỂN THỊ ---
+# --- 3. GIAO DIỆN ---
 st.title("📊 Hệ thống Quản trị Pancake POS")
 
-# Kiểm tra trạng thái Key
-if "error" in order_res and order_res["error"] == 401:
-    st.error("❌ API Key không hợp lệ hoặc đã hết hạn.")
-elif not all_orders_raw and not purchase_data and not stats_p_raw:
-    st.warning("⚠️ Kết nối OK nhưng không có dữ liệu trả về. Hãy kiểm tra Shop ID hoặc quyền hạn của Key.")
+# Khu vực Debug (Chỉ hiện khi dữ liệu trống)
+if not all_orders_raw and not purchase_data:
+    with st.expander("🔍 Kiểm tra lỗi kỹ thuật (Debug)"):
+        st.write("Phản hồi từ API Đơn hàng:", order_res)
+        st.write("Phản hồi từ API Nhập hàng:", purchase_res)
+        st.info("Nếu kết quả trên là {'data': []}, nghĩa là Key này không có quyền xem dữ liệu của shop.")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📑 Đơn hàng (24/04)", "📦 SP trong đơn", "📥 Nhập hàng", "📊 Tồn Biến thể", "📈 Tồn Sản phẩm"
-])
+tab1, tab2, tab3, tab4 = st.tabs(["📑 Đơn hàng (Toàn bộ)", "📥 Nhập hàng", "📈 Tồn kho", "⚙️ Cài đặt"])
 
 with tab1:
     if all_orders_raw:
+        st.success(f"Đã tìm thấy {len(all_orders_raw)} đơn hàng!")
         st.dataframe(pd.DataFrame(all_orders_raw), use_container_width=True)
     else:
-        st.info("Không tìm thấy đơn hàng nào từ ngày 24/04/2026.")
+        st.warning("Danh sách đơn hàng trống. Hãy kiểm tra mục Debug bên trên.")
 
-with tab3:
+with tab2:
     if purchase_data:
         st.dataframe(pd.DataFrame(purchase_data), use_container_width=True)
     else:
-        st.info("Dữ liệu Nhập hàng trống (Đã thử nghiệm các đường dẫn dự phòng).")
+        st.info("Không có dữ liệu phiếu nhập.")
 
-with tab5:
-    if stats_p_raw:
-        st.dataframe(pd.DataFrame(stats_p_raw), use_container_width=True)
+with tab3:
+    if inventory_data:
+        st.dataframe(pd.DataFrame(inventory_data), use_container_width=True)
     else:
-        st.info("Dữ liệu Tồn sản phẩm trống.")
+        st.info("Không có dữ liệu tồn kho.")
