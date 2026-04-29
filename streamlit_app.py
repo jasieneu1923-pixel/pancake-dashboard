@@ -2,38 +2,41 @@ import streamlit as st
 import requests
 import pandas as pd
 
+# --- THÔNG SỐ ---
 API_KEY = "faea6078b156431fa19f7ac903dda137"
 SHOP_ID = "30224071"
-BASE_URL = "https://pos.pages.fm/api/v1"
+BASE_URL = "https://pos.pages.fm/api/v1/shops"
 
-def force_fetch_purchase_orders():
-    url = f"{BASE_URL}/shops/{SHOP_ID}/inventory/purchase_orders"
+def get_pancake_data(endpoint, params=None):
+    url = f"{BASE_URL}/{SHOP_ID}/{endpoint}"
+    query_params = {"api_key": API_KEY}
+    if params:
+        query_params.update(params)
     
-    # Thử quét với nhiều tham số khác nhau theo tài liệu
-    # 1. Thử lấy 100 phiếu gần nhất
-    # 2. Thử mode 'all' để lấy cả phiếu nháp và hoàn thành
-    params = {
-        "api_key": API_KEY,
-        "limit": 100,
-        "mode": "all" 
-    }
-    
-    try:
-        response = requests.get(url, params=params, timeout=15)
-        return response.json()
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+    response = requests.get(url, params=query_params)
+    return response.json()
 
-st.title("🔍 Truy quét sâu Phiếu Nhập Kho")
+st.title("📦 Trình xuất dữ liệu Kho hàng chuẩn")
 
-if st.button("Bắt đầu quét toàn bộ phiếu nhập"):
-    res = force_fetch_purchase_orders()
-    
-    if res.get("success") and res.get("data"):
-        st.success(f"Đã tìm thấy {len(res['data'])} phiếu nhập kho!")
-        df = pd.DataFrame(res["data"])
-        st.dataframe(df)
-    else:
-        st.error("Kết quả vẫn trả về rỗng.")
-        st.info("Phân tích kỹ thuật:")
-        st.json(res) # Xem chi tiết lỗi hệ thống trả về
+tab1, tab2 = st.tabs(["🚚 Phiếu Nhập Kho", "📊 Tồn Kho Thực Tế"])
+
+with tab1:
+    if st.button("Lấy toàn bộ Phiếu nhập"):
+        # GỌI ĐÚNG: /inventory/purchase_orders (Không có /stats)
+        res = get_pancake_data("inventory/purchase_orders", {"limit": 50})
+        if res.get("success") and res.get("data"):
+            df = pd.DataFrame(res["data"])
+            st.success(f"Tìm thấy {len(df)} phiếu nhập hàng!")
+            st.dataframe(df)
+        else:
+            st.error("Vẫn không thấy phiếu nhập. Hãy kiểm tra lại API Key.")
+            st.write("Phản hồi từ hệ thống:", res)
+
+with tab2:
+    if st.button("Xem số lượng tồn"):
+        # GỌI ĐÚNG: /inventory/stats?type=variant
+        res = get_pancake_data("inventory/stats", {"type": "variant"})
+        if res.get("success") and res.get("data"):
+            st.dataframe(pd.DataFrame(res["data"]))
+        else:
+            st.warning("Bảng tồn kho rỗng.")
