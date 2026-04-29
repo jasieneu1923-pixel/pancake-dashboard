@@ -2,43 +2,61 @@ import streamlit as st
 import requests
 import pandas as pd
 
+# Thông tin từ tài liệu và ảnh của bạn
 API_KEY = "faea6078b156431fa19f7ac903dda137"
 SHOP_ID = "30224071"
 BASE_URL = "https://pos.pages.fm/api/v1"
 
-def fetch_inventory(path, params=None):
-    # Theo tài liệu: /shops/{shop_id}/inventory/...
-    url = f"{BASE_URL}/shops/{SHOP_ID}/inventory/{path}"
+def call_api(endpoint, params=None):
+    url = f"{BASE_URL}/shops/{SHOP_ID}/{endpoint}"
+    # Tài liệu quy định dùng tham số 'api_key' trong Query String
     query_params = {"api_key": API_KEY}
     if params:
         query_params.update(params)
-    return requests.get(url, params=query_params).json()
+    
+    try:
+        response = requests.get(url, params=query_params, timeout=15)
+        return response.json()
+    except:
+        return {"success": False, "message": "Lỗi kết nối"}
 
-st.title("🛠 Kiểm tra chuyên sâu Kho hàng")
+st.title("🚀 Pancake Data Explorer (API Key Only)")
 
-col1, col2 = st.columns(2)
+# Các bảng dữ liệu chính trong tài liệu
+tabs = st.tabs(["📦 Đơn hàng", "📈 Tồn kho", "📥 Nhập hàng", "👥 Khách hàng"])
 
-with col1:
-    st.subheader("1. Kiểm tra Nhập hàng")
-    # Endpoint: /inventory/purchase_orders
-    if st.button("Quét phiếu nhập"):
-        res = fetch_inventory("purchase_orders")
-        if res.get("success") and res.get("data"):
-            st.write(f"Tìm thấy {len(res['data'])} phiếu nhập")
-            st.dataframe(pd.DataFrame(res['data']))
+# BẢNG ĐƠN HÀNG
+with tabs[0]:
+    if st.button("Quét Đơn hàng 24/04"):
+        res = call_api("orders", {"inserted_since": "2026-04-24 00:00:00", "mode": "all"})
+        if res.get("data"):
+            st.dataframe(pd.DataFrame(res["data"]))
         else:
-            st.error("Không có dữ liệu phiếu nhập.")
-            st.write("Phản hồi hệ thống:", res)
+            st.warning("Dữ liệu đơn hàng trống.")
 
-with col2:
-    st.subheader("2. Kiểm tra Tồn kho (Stats)")
-    # Endpoint: /inventory/stats
-    if st.button("Quét tồn thực tế"):
-        # Tài liệu yêu cầu tham số type: 'product' hoặc 'variant'
-        res = fetch_inventory("stats", {"type": "variant"})
-        if res.get("success") and res.get("data"):
-            st.write(f"Tìm thấy {len(res['data'])} dòng tồn kho")
-            st.dataframe(pd.DataFrame(res['data']))
+# BẢNG TỒN KHO (Lý do hay bị rỗng nằm ở đây)
+with tabs[1]:
+    st.info("Lưu ý: Phải có tham số 'type' thì API mới trả dữ liệu tồn.")
+    if st.button("Quét Tồn kho thực tế"):
+        # QUAN TRỌNG: Tài liệu yêu cầu type là 'product' hoặc 'variant'
+        res = call_api("inventory/stats", {"type": "variant"})
+        if res.get("data"):
+            st.dataframe(pd.DataFrame(res["data"]))
         else:
-            st.error("Không có dữ liệu tồn kho.")
-            st.json(res)
+            st.error("Bảng tồn kho rỗng. Phản hồi: " + str(res))
+
+# BẢNG NHẬP HÀNG
+with tabs[2]:
+    if st.button("Quét Phiếu nhập"):
+        res = call_api("inventory/purchase_orders")
+        if res.get("data"):
+            st.dataframe(pd.DataFrame(res["data"]))
+        else:
+            st.warning("Chưa có phiếu nhập hàng nào.")
+
+# BẢNG KHÁCH HÀNG
+with tabs[3]:
+    if st.button("Quét Khách hàng"):
+        res = call_api("customers")
+        if res.get("data"):
+            st.dataframe(pd.DataFrame(res["data"]))
