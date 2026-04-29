@@ -1,100 +1,94 @@
 import streamlit as st
 import requests
 import pandas as pd
+import time
 
 # --- THÔNG SỐ XÁC THỰC ---
 API_KEY = "faea6078b156431fa19f7ac903dda137"
 SHOP_ID = "30224071"
 BASE_URL = "https://pos.pages.fm/api/v1"
 
-def fetch_all_product_fields():
-    url = f"{BASE_URL}/shops/{SHOP_ID}/products"
-    params = {"api_key": API_KEY, "limit": 100}
+def call_pancake_all_pages(endpoint, params=None):
+    """Hàm tự động quét qua tất cả các trang dữ liệu từ trước đến nay"""
+    all_data = []
+    page = 1
+    if params is None: params = {}
     
-    try:
-        response = requests.get(url, params=params, timeout=20)
-        res_json = response.json()
+    # Thiết lập giới hạn mỗi trang cao nhất có thể (thường là 100)
+    params.update({"api_key": API_KEY, "limit": 100})
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    while True:
+        status_text.text(f" đang quét trang {page} của mục {endpoint}...")
+        params["page"] = page
         
-        if res_json.get("success") and res_json.get("data"):
-            raw_products = res_json["data"]
-            all_rows = []
+        try:
+            url = f"{BASE_URL}/shops/{SHOP_ID}/{endpoint}"
+            response = requests.get(url, params=params, timeout=20).json()
             
-            for p in raw_products:
-                # Lấy thông tin biến thể (nếu có)
-                variants = p.get("variations", [])
+            if response.get("success") and response.get("data"):
+                current_batch = response["data"]
+                all_data.extend(current_batch)
                 
-                # Nếu không có biến thể, tạo 1 dòng giả định để lấy thông tin sản phẩm cha
-                if not variants:
-                    variants = [{}] 
+                # Nếu số lượng trả về ít hơn giới hạn (limit), nghĩa là đã hết dữ liệu
+                if len(current_batch) < 100:
+                    break
+                page += 1
+                time.sleep(0.2) # Nghỉ ngắn để tránh bị chặn (Rate Limit)
+            else:
+                break
+        except Exception as e:
+            st.error(f"Lỗi tại trang {page}: {e}")
+            break
+            
+    progress_bar.empty()
+    status_text.empty()
+    return all_data
 
-                for v in variants:
-                    row = {
-                        # --- THÔNG TIN SẢN PHẨM (PRODUCT) ---
-                        "Product ID": p.get("id"),
-                        "Tên Sản Phẩm": p.get("name"),
-                        "Mô tả": p.get("description"),
-                        "Loại Sản Phẩm": p.get("type"),
-                        "Danh Mục ID": p.get("category_id"),
-                        "Thương Hiệu ID": p.get("brand_id"),
-                        "Ngày Tạo": p.get("inserted_at"),
-                        "Ngày Cập Nhật": p.get("updated_at"),
-                        "Trạng Thái": "Đang bán" if p.get("is_published") else "Ngừng bán",
-                        
-                        # --- THÔNG TIN BIẾN THỂ (VARIATION) ---
-                        "Variation ID": v.get("id"),
-                        "Tên Biến Thể": v.get("name"),
-                        "Mã SKU": v.get("sku"),
-                        "Mã Vạch (Barcode)": v.get("barcode"),
-                        
-                        # --- GIÁ CẢ (PRICING) ---
-                        "Giá Bán Lẻ": v.get("retail_price"),
-                        "Giá Nhập": v.get("import_price"),
-                        "Giá Sỉ": v.get("wholesale_price"),
-                        "Giá Niêm Yết": v.get("original_price"),
-                        
-                        # --- KHO HÀNG & VẬN CHUYỂN ---
-                        "Quản Lý Kho": v.get("is_inventory"),
-                        "Khối Lượng (gram)": v.get("weight"),
-                        "Đơn Vị Tính": v.get("unit"),
-                        "Chiều Dài": v.get("length"),
-                        "Chiều Rộng": v.get("width"),
-                        "Chiều Cao": v.get("height"),
-                        
-                        # --- THUỘC TÍNH CHI TIẾT ---
-                        "Thuộc Tính 1": v.get("option1"),
-                        "Thuộc Tính 2": v.get("option2"),
-                        "Thuộc Tính 3": v.get("option3"),
-                        "Ảnh Đại Diện": v.get("image") or p.get("images", [None])[0]
-                    }
-                    all_rows.append(row)
-            return all_rows
-        return []
-    except Exception as e:
-        st.error(f"Lỗi truy xuất: {e}")
-        return []
+# --- GIAO DIỆN ---
+st.set_page_config(page_title="Pancake Lifetime Data", layout="wide")
+st.title("🗄️ Hệ thống Trích xuất Toàn bộ Lịch sử Shop")
 
-# --- GIAO DIỆN STREAMLIT ---
-st.set_page_config(page_title="Pancake Product Master Data", layout="wide")
-st.title("📦 Toàn bộ thuộc tính sản phẩm (Full Fields)")
+menu = {
+    "📑 Tất cả Đơn hàng (Lifetime)": "orders",
+    "📦 Tất cả Phiếu nhập kho": "inventory/purchase_orders",
+    "🛒 Toàn bộ Danh mục Sản phẩm": "products",
+    "👥 Toàn bộ Danh sách Khách hàng": "customers"
+}
 
-if st.button("🚀 Trích xuất toàn bộ dữ liệu sản phẩm"):
-    with st.spinner("Đang xử lý dữ liệu..."):
-        data = fetch_all_product_fields()
+selection = st.selectbox("Chọn bảng dữ liệu muốn quét từ đầu:", list(menu.keys()))
+
+if st.button(f"Bắt đầu quét toàn bộ dữ liệu"):
+    endpoint = menu[selection]
+    
+    # Riêng với Đơn hàng, bỏ tham số thời gian để lấy từ đầu
+    fetch_params = {}
+    if endpoint == "orders":
+        fetch_params = {"mode": "all"} # Lấy mọi trạng thái đơn
+    
+    with st.spinner("Hệ thống đang quét dữ liệu lịch sử..."):
+        data = call_pancake_all_pages(endpoint, fetch_params)
+        
         if data:
             df = pd.DataFrame(data)
+            st.success(f"✅ Hoàn tất! Đã lấy được tổng cộng {len(df)} dòng dữ liệu.")
             
-            # Thống kê nhanh
-            st.success(f"Đã lấy thành công {len(df)} dòng (bao gồm cả biến thể).")
-            
-            # Hiển thị bảng
+            # Mở rộng bảng nếu là Sản phẩm (để lấy giá nhập/biến thể)
+            if endpoint == "products":
+                st.info("Đang bóc tách chi tiết biến thể và giá nhập...")
+                expanded_rows = []
+                for p in data:
+                    for v in p.get("variations", []):
+                        v.update({"product_name": p.get("name"), "category_id": p.get("category_id")})
+                        expanded_rows.append(v)
+                df = pd.DataFrame(expanded_rows)
+
             st.dataframe(df, use_container_width=True)
             
-            # Xuất dữ liệu
-            col1, col2 = st.columns(2)
-            with col1:
-                csv = df.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("📥 Tải về file CSV", csv, "full_products.csv", "text/csv")
-            with col2:
-                st.info("Mẹo: Dữ liệu đã bao gồm đầy đủ Giá nhập, SKU và các thông tin vận chuyển.")
+            # Xuất file
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 Tải về toàn bộ dữ liệu (.csv)", csv, f"full_history_{endpoint.replace('/','_')}.csv", "text/csv")
         else:
-            st.warning("Không tìm thấy dữ liệu. Hãy kiểm tra lại API Key và Shop ID.")
+            st.warning("Không tìm thấy dữ liệu nào trong mục này.")
