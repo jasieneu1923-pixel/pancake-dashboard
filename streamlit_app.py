@@ -2,53 +2,77 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# --- THÔNG SỐ XÁC THỰC ---
+# --- THÔNG SỐ ---
 API_KEY = "faea6078b156431fa19f7ac903dda137"
 SHOP_ID = "30224071"
 BASE_URL = "https://pos.pages.fm/api/v1"
 
-def call_pancake(endpoint, params=None):
-    """Hàm gọi API bám sát tài liệu api-1.json"""
-    url = f"{BASE_URL}/shops/{SHOP_ID}/{endpoint}"
-    query_params = {"api_key": API_KEY}
-    if params:
-        query_params.update(params)
+def fetch_full_products():
+    url = f"{BASE_URL}/shops/{SHOP_ID}/products"
+    # Thêm limit cao để lấy hết sản phẩm
+    params = {"api_key": API_KEY, "limit": 100}
     
     try:
-        response = requests.get(url, params=query_params, timeout=15)
-        # Nếu gặp lỗi 403 như trong ảnh bạn gửi
-        if response.status_code == 403:
-            return {"success": False, "error_type": "FORBIDDEN", "message": "API Key không có quyền truy cập bảng này. Hãy kiểm tra cài đặt nhân viên hoặc phân quyền App."}
-        return response.json()
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-st.title("🚀 Pancake ERP - Toàn bộ bảng dữ liệu")
-
-# Định nghĩa các bảng từ tài liệu
-tables = {
-    "📑 Đơn hàng": ("orders", {"mode": "all", "inserted_since": "2026-04-24 00:00:00"}),
-    "📦 Phiếu Nhập": ("inventory/purchase_orders", {}),
-    "📈 Tồn Kho": ("inventory/stats", {"type": "variant"}),
-    "🛒 Sản phẩm": ("products", {}),
-    "👥 Khách hàng": ("customers", {}),
-    "🏢 Kho hàng": ("inventory/warehouses", {})
-}
-
-tab_objs = st.tabs(list(tables.keys()))
-
-for i, (label, (endpoint, default_params)) in enumerate(tables.items()):
-    with tab_objs[i]:
-        st.subheader(f"Dữ liệu bảng {label}")
-        if st.button(f"Tải {label}", key=f"btn_{endpoint}"):
-            res = call_pancake(endpoint, default_params)
+        response = requests.get(url, params=params, timeout=20)
+        res_json = response.json()
+        
+        if res_json.get("success") and res_json.get("data"):
+            raw_products = res_json["data"]
+            all_rows = []
             
-            if res.get("success") and res.get("data"):
-                df = pd.DataFrame(res["data"])
-                st.success(f"Thành công! Tìm thấy {len(df)} dòng.")
-                st.dataframe(df, use_container_width=True)
-            else:
-                st.error(res.get("message", "Dữ liệu trống hoặc lỗi quyền truy cập."))
-                if res.get("error_type") == "FORBIDDEN":
-                    st.info("💡 Cách xử lý: Bạn hãy vào Cấu hình -> Nhân viên -> Tìm tài khoản của bạn -> Tích chọn 'Quyền API/Webhook cho Kho hàng'.")
-                st.json(res)
+            # Duyệt qua từng sản phẩm để bóc tách toàn bộ trường dữ liệu
+            for p in raw_products:
+                # Nếu sản phẩm có nhiều biến thể (màu, size)
+                variants = p.get("variations", [])
+                if variants:
+                    for v in variants:
+                        row = {
+                            "ID Sản phẩm": p.get("id"),
+                            "Tên sản phẩm": p.get("name"),
+                            "Danh mục": p.get("category_id"),
+                            "ID Biến thể": v.get("id"),
+                            "Tên biến thể": v.get("name"),
+                            "Mã SKU": v.get("sku"),
+                            "Giá bán lẻ": v.get("retail_price"),
+                            "Giá nhập": v.get("import_price"),
+                            "Giá sỉ": v.get("wholesale_price"),
+                            "Khối lượng (g)": v.get("weight"),
+                            "Quản lý kho": "Bật" if v.get("is_inventory") else "Tắt",
+                            "Mô tả": p.get("description"),
+                            "Ngày tạo": p.get("inserted_at")
+                        }
+                        all_rows.append(row)
+                else:
+                    # Nếu sản phẩm không có biến thể
+                    all_rows.append({
+                        "ID Sản phẩm": p.get("id"),
+                        "Tên sản phẩm": p.get("name"),
+                        "Danh mục": p.get("category_id"),
+                        "Mã SKU": p.get("sku"),
+                        "Giá bán lẻ": p.get("retail_price"),
+                        "Mô tả": p.get("description"),
+                        "Ngày tạo": p.get("inserted_at")
+                    })
+            return all_rows
+        return []
+    except Exception as e:
+        st.error(f"Lỗi: {e}")
+        return []
+
+st.title("📦 Toàn bộ danh mục Sản phẩm & Biến thể")
+
+if st.button("Tải dữ liệu đầy đủ"):
+    with st.spinner("Đang bóc tách dữ liệu..."):
+        full_data = fetch_full_products()
+        if full_data:
+            df = pd.DataFrame(full_data)
+            st.success(f"Đã mở rộng thành công {len(df)} dòng dữ liệu!")
+            
+            # Hiển thị bảng dữ liệu đầy đủ
+            st.dataframe(df, use_container_width=True)
+            
+            # Nút tải file Excel
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 Tải file CSV đầy đủ", csv, "pancake_products_full.csv", "text/csv")
+        else:
+            st.warning("Không lấy được dữ liệu hoặc danh sách rỗng.")
